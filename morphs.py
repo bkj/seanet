@@ -52,11 +52,22 @@ class CatLayer(nn.Module):
 # --
 # Morphable layers
 
-class MorphFlatLinear(FlatLinear):
+class MorphMixin(object):
     def __init__(self, *args, **kwargs):
-        super(MorphFlatLinear, self).__init__(*args, **kwargs)
+        super(MorphMixin, self).__init__(*args, **kwargs)
         self.allow_morph = False
     
+    def forward(self, x):
+        try:
+            return super(MorphMixin, self).forward(x)
+        except:
+            if self.allow_morph:
+                self._morph(x)
+                return super(MorphMixin, self).forward(x)
+            else:
+                raise
+
+class MorphFlatLinear(MorphMixin, FlatLinear):
     def _morph(self, x):
         new_features = x.view(x.size(0), -1).size(-1)
         
@@ -66,22 +77,9 @@ class MorphFlatLinear(FlatLinear):
         
         self.in_features = new_features
         self.weight.data.set_(torch.cat([self.weight.data, padding], dim=-1))
-    
-    def forward(self, x):
-        try:
-            return super(MorphFlatLinear, self).forward(x)
-        except:
-            if self.allow_morph:
-                self._morph(x)
-                return super(MorphFlatLinear, self).forward(x)
-            else:
-                raise
 
-class MorphConv2d(nn.Conv2d):
-    def __init__(self, *args, **kwargs):
-        super(MorphConv2d, self).__init__(*args, **kwargs)
-        self.allow_morph = False
-    
+
+class MorphConv2d(MorphMixin, nn.Conv2d):
     def _morph(self, x):
         new_channels = x.size(1)
         
@@ -96,16 +94,6 @@ class MorphConv2d(nn.Conv2d):
         
         self.in_channels = new_channels
         self.weight.data.set_(torch.cat([self.weight.data, padding], dim=1))
-        
-    def forward(self, x):
-        try:
-            return super(MorphConv2d, self).forward(x)
-        except:
-            if self.allow_morph:
-                self._morph(x)
-                return super(MorphConv2d, self).forward(x)
-            else:
-                raise
 
 # --
 # Morphs
@@ -160,8 +148,9 @@ def make_model():
     return SeaNet({
         0 : (MorphConv2d(1, 32, kernel_size=3, padding=1), "data"),
         1 : (MorphConv2d(32, 32, kernel_size=3, padding=1), 0),
-        2 : (nn.MaxPool2d(2), 1),
-        3 : (MorphFlatLinear(6272, 10), 2)
+        2 : (MorphConv2d(32, 64, kernel_size=3, padding=1), 1),
+        3 : (nn.MaxPool2d(2), 2),
+        4 : (MorphFlatLinear(12544, 10), 3)
     })
 
 X = Variable(torch.randn(5, 1, 28, 28))
