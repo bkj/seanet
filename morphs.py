@@ -7,6 +7,7 @@
 from __future__ import print_function
 
 import sys
+import copy
 import numpy as np
 
 import torch
@@ -108,9 +109,9 @@ def do_add_skip(model, idx=None):
     l2_size = model(X, idx2).size()
     
     if l1_size == l2_size: # Check all dimensions
-        model = model.add_skip(idx1, idx2, AddLayer())
+        model.add_skip(idx1, idx2, AddLayer())
     else:
-        print('dimensions do not agree!')
+        raise Exception('dimensions do not agree!')
     
     return model
 
@@ -124,7 +125,7 @@ def do_cat_skip(model, idx=None):
     l2_size = model(X, idx2).size()
     
     if l1_size[-2:] == l2_size[-2:]: # Check spatial dimensions
-        model = model.add_skip(idx1, idx2, CatLayer())
+        model.add_skip(idx1, idx2, CatLayer())
         
         for k, (layer, inputs) in model.graph.items():
             try:
@@ -134,7 +135,32 @@ def do_cat_skip(model, idx=None):
                 _ = model(X, k)
                 layer.allow_morph = False
     else:
-        print('dimensions do not agree!')
+        raise Exception('dimensions do not agree!')
+    
+    return model
+
+
+def do_make_deeper(model, idx=None):
+    if idx is None:
+        edges = list(model.get_edgelist())
+        idx2, idx1 = edges[np.random.choice(len(edges))]
+    else:
+        idx1, idx2 = idx
+    
+    old_layer = model.graph[idx1][0]
+    
+    if isinstance(old_layer, nn.Conv2d):
+        if old_layer.in_channels != old_layer.out_channels:
+            raise Exception('cannot make idempotent version (layer shape)')
+            return model
+        
+        new_layer = copy.deepcopy(old_layer)
+        _ = new_layer.bias.data.zero_()
+        _ = new_layer.weight.data.zero_()
+        new_layer.weight.data[:, :, 1, 1] = torch.eye(new_layer.in_channels).view(-1)
+        model.modify_edge(idx1, idx2, new_layer)
+    else:
+        raise Exception('cannot make idempotent version (layer type)')
     
     return model
 
@@ -160,7 +186,7 @@ y = Variable(torch.randperm(5))
 # Test additive skip morph
 model = make_model()
 orig_scores = model(X)
-model = do_add_skip(model, (0, 1))
+do_add_skip(model, (0, 1))
 new_scores = model(X)
 
 assert np.allclose(to_numpy(orig_scores), to_numpy(new_scores))
@@ -183,4 +209,20 @@ opt = torch.optim.Adam(model.parameters(), lr=0.1)
 loss = F.cross_entropy(new_scores, y)
 loss.backward()
 opt.step()
+
+# --
+# Test add new layer
+
+model = make_model()
+orig_scores = model(X)
+model = do_make_deeper(model, (1, 2))
+new_scores = model(X)
+
+assert np.allclose(to_numpy(orig_scores), to_numpy(new_scores))
+
+opt = torch.optim.Adam(model.parameters(), lr=0.1)
+loss = F.cross_entropy(new_scores, y)
+loss.backward()
+opt.step()
+
 

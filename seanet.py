@@ -56,10 +56,17 @@ class SeaNet(nn.Module):
         
         pprint(self.graph)
     
-    @classmethod
-    def toposort(cls, model):
-        graph      = dict([(k, to_set(inputs)) for k,(_,inputs) in model.graph.items() if inputs != 'data'])
-        node_order = reduce(lambda a,b: list(a) + list(b), toposort(graph))
+    def get_edgelist(self):
+        for k, (_, inputs) in self.graph.items():
+            if isinstance(inputs, int):
+                yield k, inputs
+            elif isinstance(inputs, list):
+                for inp in inputs:
+                    yield k, inp
+    
+    def toposort(self, model):
+        adjlist    = dict([(k, to_set(inputs)) for k,(_,inputs) in model.graph.items() if inputs != 'data'])
+        node_order = reduce(lambda a,b: list(a) + list(b), toposort(adjlist))
         lookup     = dict(zip(node_order, range(len(node_order))))
         
         out = {}
@@ -71,7 +78,7 @@ class SeaNet(nn.Module):
             else:
                 out[lookup[k]] = (layer, inputs)
         
-        return cls(out)
+        self.__init__(out)
     
     def modify_edge(self, idx1, idx2, new_layer):
         """
@@ -86,7 +93,8 @@ class SeaNet(nn.Module):
         # Create tmp node
         self.graph[-1] = (new_layer, idx1)
         
-        return SeaNet.toposort(self)
+        self.toposort(self)
+    
     
     def modify_node(self, idx, new_layer):
         """
@@ -94,7 +102,9 @@ class SeaNet(nn.Module):
         """
         
         self.graph[idx] = (new_layer, self.graph[idx][1])
-        return SeaNet.toposort(self)
+        
+        self.toposort(self)
+    
     
     def add_skip(self, idx1, idx2, new_layer):
         """
@@ -108,4 +118,4 @@ class SeaNet(nn.Module):
         # Create tmp node
         self.graph[-1] = (new_layer, [idx2, idx1])
         
-        return SeaNet.toposort(self)
+        self.toposort(self)
