@@ -79,12 +79,12 @@ class SeaNet(nn.Module):
                 out[lookup[k]] = (layer, inputs)
         
         self.__init__(out)
+        return lookup
     
     def modify_edge(self, idx1, idx2, new_layer):
         """
             Add a layer on an edge
         """
-        
         
         # Target node now points to tmp node
         layer, inputs = self.graph[idx2]
@@ -93,8 +93,8 @@ class SeaNet(nn.Module):
         # Create tmp node
         self.graph[-1] = (new_layer, idx1)
         
-        self.toposort(self)
-    
+        lookup = self.toposort(self)
+        return lookup[-1]
     
     def modify_node(self, idx, new_layer):
         """
@@ -103,7 +103,8 @@ class SeaNet(nn.Module):
         
         self.graph[idx] = (new_layer, self.graph[idx][1])
         
-        self.toposort(self)
+        lookup = self.toposort(self)
+        return lookup[-1]
     
     
     def add_skip(self, idx1, idx2, new_layer):
@@ -118,4 +119,5 @@ class SeaNet(nn.Module):
         # Create tmp node
         self.graph[-1] = (new_layer, [idx2, idx1])
         
-        self.toposort(self)
+        lookup = self.toposort(self)
+        return lookup[-1]
