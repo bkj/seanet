@@ -280,16 +280,6 @@ def do_make_deeper(model, idx=None):
 
 torch.set_default_tensor_type('torch.DoubleTensor')
 
-def make_model():
-    set_seeds()
-    return SeaNet({
-        0 : (MorphConv2d(1, 32, kernel_size=3, padding=1), "data"),
-        1 : (MorphConv2d(32, 32, kernel_size=3, padding=1), 0),
-        2 : (MorphConv2d(32, 64, kernel_size=3, padding=1), 1),
-        3 : (nn.MaxPool2d(2), 2),
-        4 : (MorphFlatLinear(12544, 10), 3)
-    })
-
 def test_morph(model, X, y, morph, morph_args):
     orig_scores = model(X)
     morph(model, morph_args)
@@ -303,6 +293,19 @@ def test_morph(model, X, y, morph, morph_args):
     opt.step()
     
     return model
+
+# --
+# Testing basic layers
+
+def make_model():
+    set_seeds()
+    return SeaNet({
+        0 : (MorphConv2d(1, 32, kernel_size=3, padding=1), "data"),
+        1 : (MorphConv2d(32, 32, kernel_size=3, padding=1), 0),
+        2 : (MorphConv2d(32, 64, kernel_size=3, padding=1), 1),
+        3 : (nn.MaxPool2d(2), 2),
+        4 : (MorphFlatLinear(12544, 10), 3)
+    })
 
 
 X = Variable(torch.randn(5, 1, 28, 28))
@@ -323,7 +326,7 @@ test_morph(make_model(), X, y, do_make_wider, 0)
 
 
 # --
-# 
+# Testing MorphBCRLayer
 
 def make_model():
     set_seeds()
