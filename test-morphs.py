@@ -75,6 +75,9 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
     l1_size = model(layer=idx1).size()
     l2_size = model(layer=idx2).size()
     
+    if l1_size[-1] > l2_size[-1]:
+        raise Exception(colstring.red('do_add_skip: (l1_size[-1] > l2_size[-1]) -- can cause downstream problems'))
+    
     # Add skip
     merge_node = model.add_skip(idx1, idx2, AddLayer())
     
@@ -86,19 +89,15 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
                 new_layer = MorphBCRLayer(l1_size[1], l2_size[1], kernel_size=3, padding=1)
                 idx1 = model.modify_edge(idx1, merge_node, new_layer)
             else:
-                raise Exception(colstring.red('(l1_size[1] != l2_size[1]) and not fix_channels'))
+                raise Exception(colstring.red('do_add_skip: (l1_size[1] != l2_size[1]) and not fix_channels'))
         
         # If different spatial extent, add max pooling
         if (l1_size[-1] != l2_size[-1]):
             if fix_spatial:
-                if l1_size[-1] > l2_size[-1]:
-                    scale = l1_size[-1] / l2_size[-1]
-                    _ = model.modify_edge(idx1, merge_node, nn.MaxPool2d(scale))
-                else:
-                    scale = l2_size[-1] / l1_size[-1]
-                    _ = model.modify_edge(idx2, merge_node, nn.MaxPool2d(scale))
+                scale = l1_size[-1] / l2_size[-1]
+                _ = model.modify_edge(idx1, merge_node, nn.MaxPool2d(scale))
             else:
-                raise Exception(colstring.red('(l1_size[-1] != l2_size[-1]) and not fix_spatial'))
+                raise Exception(colstring.red('do_add_skip: (l1_size[-1] != l2_size[-1]) and not fix_spatial'))
     
     model.compile()
     return model
@@ -116,8 +115,7 @@ def do_cat_skip(model, idx=None, fix_spatial=True):
     merge_node = model.add_skip(idx1, idx2, CatLayer())
     
     # If different spatial extent, add max pooling
-    maxpool_node = None
-    if l1_size[-1] == l2_size[-1]:
+    if l1_size[-1] != l2_size[-1]:
         if l1_size[-1] > l2_size[-1]:
             scale = l1_size[-1] / l2_size[-1]
             maxpool_node = model.modify_edge(idx1, merge_node, nn.MaxPool2d(scale))
@@ -125,16 +123,11 @@ def do_cat_skip(model, idx=None, fix_spatial=True):
             scale = l2_size[-1] / l1_size[-1]
             maxpool_node = model.modify_edge(idx2, merge_node, nn.MaxPool2d(scale))
     
-    # Check if the architecture is feasible
-    shape_check = model.check_shapes()
-    if shape_check:
-        model.fix_shapes()
-    else:
-        model.remove_node(merge_node)
-        if maxpool_node is not None:
-            model.remove_node(maxpool_node)
-        
-        raise Exception(colstring.red('do_cat_skip: model.fix_shapes() has downstream conflicts'))
+    # 1x1 conv to fix output dim
+    out_size = model(layer=merge_node).size()
+    new_layer = MorphConv2d(out_size[1], l2_size[1], kernel_size=1, padding=0)
+    new_layer.to_eye()
+    model.modify_edge(merge_node, None, new_layer)
     
     model.compile()
     return model
@@ -146,7 +139,8 @@ def do_make_wider(model, idx=None, k=2):
     
     print(colstring.blue("do_make_wider: %d" % idx), file=sys.stderr)
     
-    old_layer = copy.deepcopy(model.graph[idx][0])
+    backup_model = copy.deepcopy(model)
+    old_layer = model.graph[idx][0]
     
     if isinstance(old_layer, MorphConv2d) or isinstance(old_layer, MorphBCRLayer):
         
@@ -155,11 +149,12 @@ def do_make_wider(model, idx=None, k=2):
         model.graph[idx][0].morph_out(new_channels=new_channels)
         
         # Fix downstream conflicts
-        shape_check = model.check_shapes()
-        if shape_check:
+        try:
             model.fix_shapes()
-        else:
-            model.graph[idx] = (old_layer, model.graph[idx][1])
+        except:
+            # If impossible, revert changes
+            model = backup_model
+            return model
             raise Exception(colstring.red('do_make_wider: model.fix_shapes() has downstream conflicts'))
         
         model.compile()
@@ -202,13 +197,15 @@ def do_make_deeper(model, idx=None):
 
 # def make_model():
 #     set_seeds()
-#     return SeaNet({
+#     model = SeaNet({
 #         1 : (MorphConv2d(1, 32, kernel_size=3, padding=1), 0),
 #         2 : (MorphConv2d(32, 32, kernel_size=3, padding=1), 1),
 #         3 : (MorphConv2d(32, 64, kernel_size=3, padding=1), 2),
 #         4 : (nn.MaxPool2d(2), 3),
 #         5 : (MorphFlatLinear(12544, 10), 4)
 #     })
+#     model.eval()
+#     return model
 
 
 # test_morph(make_model(), do_add_skip, (1, 2))
@@ -218,7 +215,6 @@ def do_make_deeper(model, idx=None):
 # test_morph(make_model(), do_make_deeper, (1, 2))
 
 # test_morph(make_model(), do_make_wider, 1)
-
 
 # --
 # Testing MorphBCRLayer
@@ -252,7 +248,7 @@ def do_make_deeper(model, idx=None):
 # Testing series of modifications
 
 def make_model():
-    set_seeds()
+    set_seeds(456)
     model = SeaNet({
         1 : (MorphBCRLayer(1, 32, kernel_size=3, padding=1), 0),
         2 : (nn.MaxPool2d(2), 1),
@@ -269,7 +265,7 @@ model = make_model()
 orig_pred = model()
 old_pred = orig_pred
 
-morph = np.random.choice([do_add_skip, do_make_deeper, do_make_wider])
+morph = np.random.choice([do_add_skip, do_cat_skip, do_make_deeper, do_make_wider])
 backup = copy.deepcopy(model)
 model = morph(model)
 new_pred = model()
@@ -280,5 +276,10 @@ model.pprint()
 i += 1
 print(i)
 
-from dask.dot import dot_graph
-dot_graph(model.graph)
+
+model.plot()
+
+
+
+
+

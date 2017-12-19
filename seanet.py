@@ -8,6 +8,7 @@ from __future__ import print_function
 
 import numpy as np
 from dask import get
+from dask.dot import dot_graph
 from pprint import pprint
 from toposort import toposort
 
@@ -72,6 +73,11 @@ class SeaNet(nn.Module):
         
         pprint(self.graph, width=120)
     
+    def plot(self, *args, **kwargs):
+        self.graph[0] = 'data'
+        dot_graph(self.graph)
+        del self.graph[0]
+    
     def get_edgelist(self):
         for k, (_, inputs) in self.graph.items():
             if isinstance(inputs, int):
@@ -99,18 +105,6 @@ class SeaNet(nn.Module):
         self.__init__(out, input_data=self._input_data)
         return lookup
     
-    def check_shapes(self):
-        for k, (layer, inputs) in self.graph.items():
-            try:
-                _ = self(layer=k)
-            except:
-                if not isinstance(layer, MorphMixin):
-                    del self.graph[0]
-                    return False
-        
-        del self.graph[0]
-        return True
-    
     def fix_shapes(self):
         for k, (layer, inputs) in self.graph.items():
             try:
@@ -121,30 +115,31 @@ class SeaNet(nn.Module):
                 layer.allow_morph = False
     
     def modify_edge(self, idx1, idx2, new_layer):
-        tmp_id = 1000 + len(self.graph)
+        tmp_idx = 1000 + len(self.graph)
         
-        layer, inputs = self.graph[idx2]
-        self.graph[idx2] = (layer, cond_replace(inputs, idx1, tmp_id))
+        if idx2 is not None:
+            layer, inputs = self.graph[idx2]
+            self.graph[idx2] = (layer, cond_replace(inputs, idx1, tmp_idx))
+        else:
+            for idx2, (layer, inputs) in self.graph.items():
+                self.graph[idx2] = (layer, cond_replace(inputs, idx1, tmp_idx))
         
         # Create tmp node
-        self.graph[tmp_id] = (new_layer, idx1)
+        self.graph[tmp_idx] = (new_layer, idx1)
         
-        return tmp_id
+        return tmp_idx
     
     def modify_node(self, idx, new_layer):
         self.graph[idx] = (new_layer, self.graph[idx][1])
         return idx
         
-    def remove_node(self, idx1, idx2):
-        del self.graph[k]
-        
     def add_skip(self, idx1, idx2, new_layer):
-        tmp_id = 1000 + len(self.graph)
+        tmp_idx = 1000 + len(self.graph)
         
-        for k,(layer, inputs) in self.graph.items():
-            self.graph[k] = (layer, cond_replace(inputs, idx2, tmp_id))
+        for k, (layer, inputs) in self.graph.items():
+            self.graph[k] = (layer, cond_replace(inputs, idx2, tmp_idx))
         
         # Create tmp node
-        self.graph[tmp_id] = (new_layer, [idx2, idx1])
+        self.graph[tmp_idx] = (new_layer, [idx2, idx1])
         
-        return tmp_id
+        return tmp_idx
