@@ -10,8 +10,22 @@ import sys
 
 import torch
 from torch import nn
+from torch.autograd import Variable
 
 torch.set_default_tensor_type('torch.DoubleTensor')
+
+class DummyDataLayer(nn.Module):
+    def __init__(self, shape):
+        super(DummyDataLayer, self).__init__()
+        self.shape = shape
+        self.X = Variable(torch.randn(shape))
+    
+    def forward(self):
+        return self.X
+    
+    def __repr__(self):
+        return self.__class__.__name__ + str(self.shape)
+
 
 class FlatLinear(nn.Linear):
     def forward(self, x):
@@ -49,6 +63,7 @@ class MorphMixin(object):
     def __init__(self, *args, **kwargs):
         super(MorphMixin, self).__init__(*args, **kwargs)
         self.allow_morph = False
+        self.morphable = True
     
     def forward(self, x):
         try:

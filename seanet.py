@@ -14,6 +14,9 @@ from toposort import toposort
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.autograd import Variable
+
+from morph_layers import MorphMixin
 
 # --
 # Helpers
@@ -30,7 +33,9 @@ def cond_replace(x, src, dst):
         return x
 
 class SeaNet(nn.Module):
-    def __init__(self, graph):
+    def __init__(self, graph, input_shape=(1, 28, 28), input_data=None):
+        assert 0 not in graph.keys(), "SeaNet: 0 in graph.keys() -- 0 is reserved for data"
+        
         super(SeaNet, self).__init__()
         
         self.graph = graph
@@ -40,37 +45,50 @@ class SeaNet(nn.Module):
         for k,(layer, inputs) in self.graph.items():
             if isinstance(layer, nn.Module):
                 self.add_module(str(k), layer)
+        
+        if input_data is None:
+            self._input_shape = input_shape
+            self._input_data  = Variable(torch.randn((10,) + self._input_shape))
+        else:
+            self._input_shape = input_data.size()[1:]
+            self._input_data  = input_data
     
-    def forward(self, x, layer=None):
+    def forward(self, x=None, layer=None):
         if layer is None:
             layer = self.top_layer
         
-        self.graph['data'] = x
+        if x is None:
+            self.graph[0] = self._input_data.clone()
+        else:
+            self.graph[0] = x
+        
         output = get(self.graph, layer)
-        del self.graph['data']
+        del self.graph[0]
         return output
     
     def pprint(self):
-        if 'data' in self.graph:
-            del self.graph['data']
+        if 0 in self.graph:
+            del self.graph[0]
         
-        pprint(self.graph)
+        pprint(self.graph, width=120)
     
     def get_edgelist(self):
         for k, (_, inputs) in self.graph.items():
             if isinstance(inputs, int):
-                yield k, inputs
+                if inputs != 0:
+                    yield k, inputs
             elif isinstance(inputs, list):
                 for inp in inputs:
-                    yield k, inp
+                    if inp != 0:
+                        yield k, inp
     
-    def toposort(self, model):
-        adjlist    = dict([(k, to_set(inputs)) for k,(_,inputs) in model.graph.items() if inputs != 'data'])
+    def compile(self):
+        adjlist    = dict([(k, to_set(inputs)) for k,(_,inputs) in self.graph.items()])
         node_order = reduce(lambda a,b: list(a) + list(b), toposort(adjlist))
         lookup     = dict(zip(node_order, range(len(node_order))))
         
         out = {}
-        for k, (layer, inputs) in model.graph.items():
+        for k, (layer, inputs) in self.graph.items():
             if isinstance(inputs, int):
                 out[lookup[k]] = (layer, lookup[inputs])
             elif isinstance(inputs, list):
@@ -78,46 +96,55 @@ class SeaNet(nn.Module):
             else:
                 out[lookup[k]] = (layer, inputs)
         
-        self.__init__(out)
+        self.__init__(out, input_data=self._input_data)
         return lookup
     
-    def modify_edge(self, idx1, idx2, new_layer):
-        """
-            Add a layer on an edge
-        """
+    def check_shapes(self):
+        for k, (layer, inputs) in self.graph.items():
+            try:
+                _ = self(layer=k)
+            except:
+                if not isinstance(layer, MorphMixin):
+                    del self.graph[0]
+                    return False
         
-        # Target node now points to tmp node
+        del self.graph[0]
+        return True
+    
+    def fix_shapes(self):
+        for k, (layer, inputs) in self.graph.items():
+            try:
+                _ = self(layer=k)
+            except:
+                layer.allow_morph = True
+                _ = self(layer=k)
+                layer.allow_morph = False
+    
+    def modify_edge(self, idx1, idx2, new_layer):
+        tmp_id = 1000 + len(self.graph)
+        
         layer, inputs = self.graph[idx2]
-        self.graph[idx2] = (layer, cond_replace(inputs, idx1, -1))
+        self.graph[idx2] = (layer, cond_replace(inputs, idx1, tmp_id))
         
         # Create tmp node
-        self.graph[-1] = (new_layer, idx1)
+        self.graph[tmp_id] = (new_layer, idx1)
         
-        lookup = self.toposort(self)
-        return lookup[-1]
+        return tmp_id
     
     def modify_node(self, idx, new_layer):
-        """
-            Modify a node
-        """
-        
         self.graph[idx] = (new_layer, self.graph[idx][1])
+        return idx
         
-        lookup = self.toposort(self)
-        return lookup[-1]
-    
-    
+    def remove_node(self, idx1, idx2):
+        del self.graph[k]
+        
     def add_skip(self, idx1, idx2, new_layer):
-        """
-            Add a skip connection that adds output of `idx1` and output of `idx2`
-        """
+        tmp_id = 1000 + len(self.graph)
         
-        # All layers that take idx2 as input now take tmp node
         for k,(layer, inputs) in self.graph.items():
-            self.graph[k] = (layer, cond_replace(inputs, idx2, -1))
+            self.graph[k] = (layer, cond_replace(inputs, idx2, tmp_id))
         
         # Create tmp node
-        self.graph[-1] = (new_layer, [idx2, idx1])
+        self.graph[tmp_id] = (new_layer, [idx2, idx1])
         
-        lookup = self.toposort(self)
-        return lookup[-1]
+        return tmp_id

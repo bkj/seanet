@@ -25,16 +25,40 @@ torch.set_default_tensor_type('torch.DoubleTensor')
 # --
 # Helpers
 
-def test_morph(model, X, y, morph, morph_args, test_step=False):
-    orig_scores = model(X)
+class colstring(object):
+    BLUE = '\033[94m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    ENDC = '\033[0m'
+    
+    @staticmethod
+    def blue(msg):
+        return colstring.BLUE + msg + colstring.ENDC
+        
+    @staticmethod
+    def green(msg):
+        return colstring.GREEN + msg + colstring.ENDC
+        
+    @staticmethod
+    def yellow(msg):
+        return colstring.YELLOW + msg + colstring.ENDC
+        
+    @staticmethod
+    def red(msg):
+        return colstring.RED + msg + colstring.ENDC
+
+
+def test_morph(model, morph, morph_args, test_step=False):
+    orig_scores = model()
     morph(model, morph_args)
-    new_scores = model(X)
+    new_scores = model()
     
     assert np.allclose(to_numpy(orig_scores), to_numpy(new_scores))
     
     if test_step:
         opt = torch.optim.Adam(model.parameters(), lr=0.1)
-        loss = F.cross_entropy(new_scores, y)
+        loss = F.cross_entropy(new_scores, Variable(torch.randn(new_scores.size(0))))
         loss.backward()
         opt.step()
     
@@ -43,91 +67,106 @@ def test_morph(model, X, y, morph, morph_args, test_step=False):
 # --
 # Morphs
 
-def do_add_skip(model, idx=None, use_pooling=True):
-    """
-        Create an additive skip connection
-        
-        If spatial dimensions don't agree, also adds a nn.MaxPool2d
-        If number of channels don't agree, ... fails, but shouldn't ...
-    """
+def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
     idx1, idx2 = idx if idx is not None else sorted(np.random.choice(model.top_layer, 2, replace=False))
     
-    print("do_add_skip: %d -> %d" % (idx1, idx2), file=sys.stderr)
+    print(colstring.blue("do_add_skip: %d -> %d" % (idx1, idx2)), file=sys.stderr)
     
-    l1_size = model(X, idx1).size()
-    l2_size = model(X, idx2).size()
+    l1_size = model(layer=idx1).size()
+    l2_size = model(layer=idx2).size()
     
-    # If same shape, simply add
-    if l1_size == l2_size:
-        model.add_skip(idx1, idx2, AddLayer())
-        return model
+    # Add skip
+    merge_node = model.add_skip(idx1, idx2, AddLayer())
     
-    # If same number of channels, rescale spatial
-    if use_pooling and (l1_size[1] == l2_size[1]):
-        scale_1 = l1_size[-2] / l2_size[-2]
-        scale_2 = l1_size[-1] / l2_size[-1]
-        assert scale_1 == scale_2, "do_add_skip: use_pooling says 'input must be square!'"
+    # If same shape, return
+    if l1_size != l2_size:
+        # If different channels, add a convolutional block on skip connection
+        if (l1_size[1] != l2_size[1]):
+            if fix_channels:
+                new_layer = MorphBCRLayer(l1_size[1], l2_size[1], kernel_size=3, padding=1)
+                idx1 = model.modify_edge(idx1, merge_node, new_layer)
+            else:
+                raise Exception(colstring.red('(l1_size[1] != l2_size[1]) and not fix_channels'))
         
-        new_node = model.add_skip(idx1, idx2, AddLayer())
-        _ = model.modify_edge(idx1, new_node, nn.MaxPool2d(scale_1))
+        # If different spatial extent, add max pooling
+        if (l1_size[-1] != l2_size[-1]):
+            if fix_spatial:
+                if l1_size[-1] > l2_size[-1]:
+                    scale = l1_size[-1] / l2_size[-1]
+                    _ = model.modify_edge(idx1, merge_node, nn.MaxPool2d(scale))
+                else:
+                    scale = l2_size[-1] / l1_size[-1]
+                    _ = model.modify_edge(idx2, merge_node, nn.MaxPool2d(scale))
+            else:
+                raise Exception(colstring.red('(l1_size[-1] != l2_size[-1]) and not fix_spatial'))
     
-     # Different number of channels
-    elif use_pooling and (l1_size[1] != l2_size[1]):
-        raise Exception('dimensions do not agree!')
-    
-    else:
-        raise Exception('dimensions do not agree!')
-    
+    model.compile()
     return model
 
 
-def do_cat_skip(model, idx=None):
+def do_cat_skip(model, idx=None, fix_spatial=True):
     idx1, idx2 = idx if idx is not None else sorted(np.random.choice(model.top_layer, 2, replace=False))
     
-    print("do_cat_skip: %d -> %d" % (idx1, idx2), file=sys.stderr)
+    print(colstring.blue("do_cat_skip: %d -> %d" % (idx1, idx2)), file=sys.stderr)
     
-    l1_size = model(X, idx1).size()
-    l2_size = model(X, idx2).size()
+    l1_size = model(layer=idx1).size()
+    l2_size = model(layer=idx2).size()
     
-    if l1_size[-2:] == l2_size[-2:]: # Check spatial dimensions
-        model.add_skip(idx1, idx2, CatLayer())
-        
-        for k, (layer, inputs) in model.graph.items():
-            try:
-                _ = model(X, k)
-            except:
-                layer.allow_morph = True
-                _ = model(X, k)
-                layer.allow_morph = False
+    # Add skip
+    merge_node = model.add_skip(idx1, idx2, CatLayer())
+    
+    # If different spatial extent, add max pooling
+    maxpool_node = None
+    if l1_size[-1] == l2_size[-1]:
+        if l1_size[-1] > l2_size[-1]:
+            scale = l1_size[-1] / l2_size[-1]
+            maxpool_node = model.modify_edge(idx1, merge_node, nn.MaxPool2d(scale))
+        else:
+            scale = l2_size[-1] / l1_size[-1]
+            maxpool_node = model.modify_edge(idx2, merge_node, nn.MaxPool2d(scale))
+    
+    # Check if the architecture is feasible
+    shape_check = model.check_shapes()
+    if shape_check:
+        model.fix_shapes()
     else:
-        raise Exception('dimensions do not agree!')
+        model.remove_node(merge_node)
+        if maxpool_node is not None:
+            model.remove_node(maxpool_node)
+        
+        raise Exception(colstring.red('do_cat_skip: model.fix_shapes() has downstream conflicts'))
     
+    model.compile()
     return model
 
 
 def do_make_wider(model, idx=None, k=2):
     if idx is None:
-        idx = np.random.choice(model.top_layer, 1)[0]
+        idx = np.random.choice(range(1, model.top_layer), 1)[0]
     
-    print("do_make_wider: %d" % idx, file=sys.stderr)
+    print(colstring.blue("do_make_wider: %d" % idx), file=sys.stderr)
     
-    old_layer = model.graph[idx][0]
+    old_layer = copy.deepcopy(model.graph[idx][0])
     
     if isinstance(old_layer, MorphConv2d) or isinstance(old_layer, MorphBCRLayer):
+        
+        # Make layer wider
         new_channels = k * old_layer.out_channels
         model.graph[idx][0].morph_out(new_channels=new_channels)
         
-        for k, (layer, inputs) in model.graph.items():
-            try:
-                _ = model(X, k)
-            except:
-                layer.allow_morph = True
-                _ = model(X, k)
-                layer.allow_morph = False
+        # Fix downstream conflicts
+        shape_check = model.check_shapes()
+        if shape_check:
+            model.fix_shapes()
+        else:
+            model.graph[idx] = (old_layer, model.graph[idx][1])
+            raise Exception(colstring.red('do_make_wider: model.fix_shapes() has downstream conflicts'))
+        
+        model.compile()
+        return model
+        
     else:
-        raise Exception('cannot make layer wider')
-    
-    return model
+        raise Exception(colstring.red('do_make_wider: invalid layer type -> %s' % old_layer.__class__.__name__))
 
 
 def do_make_deeper(model, idx=None):
@@ -137,20 +176,26 @@ def do_make_deeper(model, idx=None):
     else:
         idx1, idx2 = idx
     
-    print("do_make_deeper: %d -> %d" % (idx1, idx2), file=sys.stderr)
+    print(colstring.blue("do_make_deeper: %d -> %d" % (idx1, idx2)), file=sys.stderr)
     
     old_layer = model.graph[idx1][0]
     
     if isinstance(old_layer, MorphConv2d) or isinstance(old_layer, MorphBCRLayer):
+        # Copy layer
         new_layer = copy.deepcopy(old_layer)
+        
+        # Make idempontent new layer
         new_layer.set_in_channels(new_layer.out_channels)
         new_layer.to_eye()
-        model.modify_edge(idx1, idx2, new_layer)
+        
+        # Add to graph
+        _ = model.modify_edge(idx1, idx2, new_layer)
+        
+        model.compile()
+        return model
         
     else:
-        raise Exception('cannot make layer deeper')
-    
-    return model
+        raise Exception(colstring.red("cannot make layer deeper -> %s" % old_layer.__class__.__name__))
 
 # --
 # Testing basic layers
@@ -158,65 +203,49 @@ def do_make_deeper(model, idx=None):
 # def make_model():
 #     set_seeds()
 #     return SeaNet({
-#         0 : (MorphConv2d(1, 32, kernel_size=3, padding=1), "data"),
-#         1 : (MorphConv2d(32, 32, kernel_size=3, padding=1), 0),
-#         2 : (MorphConv2d(32, 64, kernel_size=3, padding=1), 1),
-#         3 : (nn.MaxPool2d(2), 2),
-#         4 : (MorphFlatLinear(12544, 10), 3)
+#         1 : (MorphConv2d(1, 32, kernel_size=3, padding=1), 0),
+#         2 : (MorphConv2d(32, 32, kernel_size=3, padding=1), 1),
+#         3 : (MorphConv2d(32, 64, kernel_size=3, padding=1), 2),
+#         4 : (nn.MaxPool2d(2), 3),
+#         5 : (MorphFlatLinear(12544, 10), 4)
 #     })
 
 
-# X = Variable(torch.randn(5, 1, 28, 28))
-# y = Variable(torch.randperm(5))
-# test_morph(make_model(), X, y, do_add_skip, (0, 1))
+# test_morph(make_model(), do_add_skip, (1, 2))
 
-# X = Variable(torch.randn(5, 1, 28, 28))
-# y = Variable(torch.randperm(5))
-# test_morph(make_model(), X, y, do_cat_skip, (0, 1))
+# test_morph(make_model(), do_cat_skip, (1, 2))
 
-# X = Variable(torch.randn(5, 1, 28, 28))
-# y = Variable(torch.randperm(5))
-# test_morph(make_model(), X, y, do_make_deeper, (0, 1))
+# test_morph(make_model(), do_make_deeper, (1, 2))
 
-# X = Variable(torch.randn(5, 1, 28, 28))
-# y = Variable(torch.randperm(5))
-# test_morph(make_model(), X, y, do_make_wider, 0)
+# test_morph(make_model(), do_make_wider, 1)
 
 
-# # --
-# # Testing MorphBCRLayer
+# --
+# Testing MorphBCRLayer
 
 # def make_model():
 #     set_seeds()
 #     model = SeaNet({
-#         0 : (MorphConv2d(1, 32, kernel_size=3, padding=1), "data"),
-#         1 : (MorphConv2d(32, 32, kernel_size=3, padding=1), 0),
-#         2 : (MorphBCRLayer(32, 32, kernel_size=3, padding=1), 1),
-#         3 : (nn.MaxPool2d(2), 2),
-#         4 : (MorphFlatLinear(6272, 10), 3)
+#         1 : (MorphConv2d(1, 32, kernel_size=3, padding=1), 0),
+#         2 : (MorphConv2d(32, 32, kernel_size=3, padding=1), 1),
+#         3 : (MorphBCRLayer(32, 32, kernel_size=3, padding=1), 2),
+#         4 : (nn.MaxPool2d(2), 3),
+#         5 : (MorphFlatLinear(6272, 10), 4)
 #     })
 #     model.eval()
 #     return model
 
-# X = Variable(torch.randn(5, 1, 28, 28))
-# y = Variable(torch.randperm(5))
-# test_morph(make_model(), X, y, do_add_skip, (0, 1))
+# test_morph(make_model(), do_add_skip, (1, 2))
 
-# X = Variable(torch.randn(5, 1, 28, 28))
-# y = Variable(torch.randperm(5))
-# test_morph(make_model(), X, y, do_cat_skip, (0, 1))
+# test_morph(make_model(), do_cat_skip, (1, 2))
 
-# X = Variable(torch.randn(5, 1, 28, 28))
-# y = Variable(torch.randperm(5))
-# test_morph(make_model(), X, y, do_make_deeper, (0, 1))
-# test_morph(make_model(), X, y, do_make_deeper, (1, 2))
-# test_morph(make_model(), X, y, do_make_deeper, (2, 3))
+# test_morph(make_model(), do_make_deeper, (1, 2))
+# test_morph(make_model(), do_make_deeper, (2, 3))
+# test_morph(make_model(), do_make_deeper, (3, 4))
 
-# X = Variable(torch.randn(5, 1, 28, 28))
-# y = Variable(torch.randperm(5))
-# test_morph(make_model(), X, y, do_make_wider, 0)
-# test_morph(make_model(), X, y, do_make_wider, 1)
-# test_morph(make_model(), X, y, do_make_wider, 2)
+# test_morph(make_model(), do_make_wider, 1)
+# test_morph(make_model(), do_make_wider, 2)
+# test_morph(make_model(), do_make_wider, 3)
 
 
 # --
@@ -225,28 +254,31 @@ def do_make_deeper(model, idx=None):
 def make_model():
     set_seeds()
     model = SeaNet({
-        0 : (MorphBCRLayer(1, 32, kernel_size=3, padding=1), "data"),
-        1 : (nn.MaxPool2d(2), 0),
-        2 : (MorphBCRLayer(32, 32, kernel_size=3, padding=1), 1),
-        3 : (nn.MaxPool2d(2), 2),
-        4 : (MorphBCRLayer(32, 32, kernel_size=3, padding=1), 3),
-        5 : (MorphFlatLinear(1568, 10), 4),
+        1 : (MorphBCRLayer(1, 32, kernel_size=3, padding=1), 0),
+        2 : (nn.MaxPool2d(2), 1),
+        3 : (MorphBCRLayer(32, 32, kernel_size=3, padding=1), 2),
+        4 : (nn.MaxPool2d(2), 3),
+        5 : (MorphBCRLayer(32, 32, kernel_size=3, padding=1), 4),
+        6 : (MorphFlatLinear(1568, 10), 5),
     })
     model.eval()
     return model
 
-np.random.seed(123)
-X = Variable(torch.randn(5, 1, 28, 28))
-y = Variable(torch.randperm(5))
-
+i = 0
 model = make_model()
-old_pred = model(X)
+orig_pred = model()
+old_pred = orig_pred
 
 morph = np.random.choice([do_add_skip, do_make_deeper, do_make_wider])
-print(morph)
+backup = copy.deepcopy(model)
 model = morph(model)
-new_pred = model(X)
-np.allclose(old_pred.data.numpy(), new_pred.data.numpy())
+new_pred = model()
+assert np.allclose(old_pred.data.numpy(), new_pred.data.numpy())
+assert np.allclose(orig_pred.data.numpy(), new_pred.data.numpy())
 old_pred = new_pred
+model.pprint()
+i += 1
+print(i)
 
-print(model)
+from dask.dot import dot_graph
+dot_graph(model.graph)
