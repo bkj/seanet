@@ -35,9 +35,12 @@ torch.set_default_tensor_type('torch.DoubleTensor')
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', type=int, default=40)
-    parser.add_argument('--lr-schedule', type=str, default='cyclical')
-    parser.add_argument('--lr-init', type=float, default=0.1)
+    
+    parser.add_argument('--outpath', type=str, default='./results/models/delete-me')
+    
+    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--lr-schedule', type=str, default='constant')
+    parser.add_argument('--lr-init', type=float, default=0.05)
     parser.add_argument('--no-cuda', action="store_true")
     
     return parser.parse_args()
@@ -174,3 +177,8 @@ for epoch in range(0, args.epochs):
     train_accs.append(train_acc)
     test_accs.append(test_acc)
     print(json.dumps({'train_acc' : train_acc, 'test_acc' : test_acc}))
+
+torch.save(net.state_dict(), args.outpath)
+
+
+
