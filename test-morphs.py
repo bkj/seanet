@@ -122,3 +122,6 @@ assert np.allclose(orig_pred.data.numpy(), new_pred.data.numpy())
 old_pred = new_pred
 model.pprint()
 
+# --
+
+print('passed')

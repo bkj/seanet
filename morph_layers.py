@@ -117,7 +117,7 @@ class MorphConv2d(MorphMixin, nn.Conv2d):
     def to_eye(self):
         _ = self.bias.data.zero_()
         self.weight.data = torch.zeros((self.out_channels, self.in_channels) + self.kernel_size)
-        mid = (self.kernel_size[0] - 1) / 2
+        mid = int((self.kernel_size[0] - 1) / 2)
         self.weight.data[:, :self.out_channels, mid, mid] = torch.eye(self.out_channels).view(-1)
 
 

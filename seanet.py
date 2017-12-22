@@ -12,6 +12,10 @@ from dask.dot import dot_graph
 from pprint import pprint
 from toposort import toposort
 
+
+from hashlib import md5
+from string import ascii_letters as letters
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -33,11 +37,17 @@ def cond_replace(x, src, dst):
     else:
         return x
 
+def short_uuid(n=8):
+    return ''.join(np.random.choice(list(letters), n))
+
+
 class SeaNet(nn.Module):
     def __init__(self, graph, input_shape=(1, 28, 28), input_data=None):
         assert 0 not in graph.keys(), "SeaNet: 0 in graph.keys() -- 0 is reserved for data"
         
         super(SeaNet, self).__init__()
+        
+        self._id = short_uuid()
         
         self.graph = graph
         self.top_layer = max(graph.keys())
@@ -53,6 +63,11 @@ class SeaNet(nn.Module):
         else:
             self._input_shape = input_data.size()[1:]
             self._input_data  = input_data
+    
+    def get_id(self):
+        model_name = md5(str(self.graph).encode('utf-8')).hexdigest()
+        model_name += '-' + self._id
+        return model_name
     
     def forward(self, x=None, layer=None):
         if layer is None:
@@ -90,7 +105,7 @@ class SeaNet(nn.Module):
     
     def compile(self):
         adjlist    = dict([(k, to_set(inputs)) for k,(_,inputs) in self.graph.items()])
-        node_order = reduce(lambda a,b: list(a) + list(b), toposort(adjlist))
+        node_order = [item for sublist in toposort(adjlist) for item in sublist]
         lookup     = dict(zip(node_order, range(len(node_order))))
         
         out = {}

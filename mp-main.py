@@ -12,6 +12,8 @@ import json
 import copy
 import argparse
 import numpy as np
+from time import time
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -21,10 +23,14 @@ from torch.autograd import Variable
 import torchvision
 import torchvision.transforms as transforms
 
-from morph_ops import do_random_morph
+from seanet import SeaNet
+import morph_layers as mm
 from lr import LRSchedule
+from morph_ops import do_random_morph
 from utils import progress_bar
 from helpers import set_seeds, to_numpy, colstring
+
+import torch.multiprocessing as mp
 
 # torch.set_default_tensor_type('torch.DoubleTensor')
 
@@ -80,7 +86,7 @@ def make_dataloaders():
 # --
 # Helpers
 
-def train_epoch(model, opt, lr_scheduler, epoch, trainloader):
+def train_epoch(model, opt, lr_scheduler, epoch, trainloader, gpu_id=0, verbose=True):
     _ = model.train()
     train_loss = 0
     correct = 0
@@ -89,7 +95,7 @@ def train_epoch(model, opt, lr_scheduler, epoch, trainloader):
     batches_per_epoch = len(trainloader)
     
     for batch_idx, (data, targets) in enumerate(trainloader):
-        data, targets = Variable(data.cuda()), Variable(targets.cuda())
+        data, targets = Variable(data.cuda(gpu_id)), Variable(targets.cuda(gpu_id))
         
         # Set LR
         LRSchedule.set_lr(opt, lr_scheduler(epoch + batch_idx / batches_per_epoch))
@@ -105,19 +111,20 @@ def train_epoch(model, opt, lr_scheduler, epoch, trainloader):
         total += targets.size(0)
         correct += predicted.eq(targets.data).cpu().sum()
         
-        progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-            % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        if verbose:
+            progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
     
     return float(correct) / total
 
 
-def test_epoch(model, testloader):
+def test_epoch(model, testloader, gpu_id=0, verbose=True):
     _ = model.eval()
     test_loss = 0
     correct = 0
     total = 0
     for batch_idx, (data, targets) in enumerate(testloader):
-        data, targets = Variable(data.cuda(), volatile=True), Variable(targets.cuda())
+        data, targets = Variable(data.cuda(gpu_id), volatile=True), Variable(targets.cuda(gpu_id))
         
         outputs = model(data)
         loss = F.cross_entropy(outputs, targets)
@@ -127,58 +134,91 @@ def test_epoch(model, testloader):
         total += targets.size(0)
         correct += predicted.eq(targets.data).cpu().sum()
         
-        progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-            % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        if verbose:
+            progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
     
     return float(correct) / total
 
-
-def train(model, trainloader, testloader, epochs=1, lr_init=0.05, lr_min=0.0, period_length=None):
+def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kwargs):
+    if not kwargs.get('period_length', 0):
+        kwargs['period_length'] = epochs
     
-    if period_length is None:
-        period_length = epochs
-    
-    lr_scheduler = LRSchedule.sgdr(period_length=period_length, lr_init=lr_init, lr_min=lr_min)
+    model = model.cuda(gpu_id)
+    lr_scheduler = LRSchedule.sgdr(**kwargs)
     opt = torch.optim.SGD(model.parameters(), lr=lr_scheduler(0), momentum=0.9, weight_decay=5e-4)
     
     train_accs, test_accs = [], []
     for epoch in range(0, epochs):
-        print("Epoch=%d" % epoch, file=sys.stderr)
+        print("gpu_id=%d | Epoch=%d" % (gpu_id, epoch), file=sys.stderr)
         
-        train_acc = train_epoch(model, opt, lr_scheduler, epoch, trainloader)
-        test_acc = test_epoch(model, testloader)
+        train_acc = train_epoch(model, opt, lr_scheduler, epoch, trainloader, gpu_id=gpu_id, verbose=verbose)
+        test_acc = test_epoch(model, testloader, gpu_id=gpu_id, verbose=verbose)
         
         train_accs.append(train_acc)
         test_accs.append(test_acc)
-        
-    return {
-        "model" : model,
-        "train_accs" : train_accs,
-        "test_accs" : test_accs,
-    }
+    
+    return model, {"train_accs" : train_accs, "test_accs" : test_accs}
 
 
 # --
 # Run
 
-from seanet import SeaNet
-import morph_layers as mm
+def _mp_train_worker(models, model_ids, gpu_id, results, verbose=False, **kwargs):
+    trainloader, testloader = make_dataloaders()
+    for model_id in model_ids:
+        t = time()
+        
+        model, performance = train(models[model_id], trainloader, testloader, **kwargs)
+        
+        # Save model to disk
+        model = model.cpu()
+        model_name = model.get_id() + datetime.now().strftime('-%Y%m%d_%H%M%S')
+        weight_path = os.path.join('.weights', model_name)
+        torch.save(model.state_dict(), weight_path)
+        del model
+        
+        results[model_id] = {
+            "model"       : None,
+            "weight_path" : weight_path,
+            "performance" : performance,
+        }
+        
+        print("worker_train: finished model_id=%d in %f seconds" % (model_id, time() - t), file=sys.stderr)
 
-set_seeds(123)
 
-model = SeaNet({
-    1 : (mm.MorphBCRLayer(3, 64, kernel_size=3, padding=1), 0),
-    2 : (nn.MaxPool2d(2), 1),
-    3 : (mm.MorphBCRLayer(64, 128, kernel_size=3, padding=1), 2),
-    4 : (nn.MaxPool2d(2), 3),
-    5 : (mm.MorphBCRLayer(128, 128, kernel_size=3, padding=1), 4),
-    6 : (mm.MorphFlatLinear(2048 * 4, 10), 5),
-}, input_shape=(3, 32, 32)).cuda()
+def train_mp(models, num_gpus=2, **kwargs):
+    manager = mp.Manager()
+    results = manager.dict()
+    
+    chunks = np.array_split(list(models.keys()), num_gpus)
+    
+    processes = []
+    for gpu_id, chunk in enumerate(chunks):
+        kwargs.update({
+            "models"     : models,
+            "model_ids"  : chunk,
+            "gpu_id"     : gpu_id, 
+            "results"    : results,
+        })
+        p = mp.Process(target=_mp_train_worker, kwargs=kwargs)
+        p.start()
+        processes.append(p)
+    
+    for p in processes:
+        p.join()
+    
+    # Load state dicts from disk
+    results = dict(results)
+    for k in models.keys():
+        models[k].load_state_dict(torch.load(results[k]['weight_path']))
+        results[k]['model'] = models[k]
+    
+    del models
+    
+    return results
 
-trainloader, testloader = make_dataloaders()
-
-hist[-1] = train(model, trainloader, testloader, epochs=args.epochs, lr_init=args.lr_init)
-
+# <<
 
 # --
 # Make children
@@ -189,6 +229,19 @@ num_morphs = 5
 num_steps = 5
 num_epoch_neighbors = 17
 num_epoch_final = 100
+all_models = {}
+
+set_seeds(123)
+base_model = SeaNet({
+    1 : (mm.MorphBCRLayer(3, 64, kernel_size=3, padding=1), 0),
+    2 : (nn.MaxPool2d(2), 1),
+    3 : (mm.MorphBCRLayer(64, 128, kernel_size=3, padding=1), 2),
+    4 : (nn.MaxPool2d(2), 3),
+    5 : (mm.MorphBCRLayer(128, 128, kernel_size=3, padding=1), 4),
+    6 : (mm.MorphFlatLinear(2048 * 4, 10), 5),
+}, input_shape=(3, 32, 32))
+
+all_models[-1] = train_mp({0 : base_model}, epochs=10, verbose=True)
 
 best_model = copy.deepcopy(hist[-1]['model'].cpu())
 
