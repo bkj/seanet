@@ -140,6 +140,7 @@ def test_epoch(model, testloader, gpu_id=0, verbose=True):
     
     return float(correct) / total
 
+
 def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kwargs):
     if not kwargs.get('period_length', 0):
         kwargs['period_length'] = epochs
@@ -218,8 +219,6 @@ def train_mp(models, num_gpus=2, **kwargs):
     
     return results
 
-# <<
-
 # --
 # Make children
 
@@ -242,19 +241,18 @@ base_model = SeaNet({
 }, input_shape=(3, 32, 32))
 
 all_models[-1] = train_mp({0 : base_model}, epochs=10, verbose=True)
+best_model = copy.deepcopy(all_models[-1][0]['model'])
 
-best_model = copy.deepcopy(hist[-1]['model'].cpu())
-
-# Morph
+# Create a population of neighbors
 neibs = {}
-neibs[0] = {"model" : best_model}
+neibs[0] = best_model
 while len(neibs) < num_neighbors:
     try:
-        neibs[len(neibs)] = {"model" : do_random_morph(best_model, n=num_morphs)}
+        neibs[len(neibs)] = do_random_morph(best_model, n=num_morphs)
     except:
         pass
     
-    print('--', file=sys.stderr)
+    print(''.join(['-'] * 100), file=sys.stderr)
 
 # Train
 for k, neib in neibs.items():
