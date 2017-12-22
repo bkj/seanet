@@ -39,13 +39,18 @@ import torch.multiprocessing as mp
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--outpath', type=str, default='./results/models/delete-me')
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr-init', type=float, default=0.05)
     
+    parser.add_argument('--num-neighbors', type=int, default=8)
+    parser.add_argument('--num-morphs', type=int, default=5)
+    parser.add_argument('--num-steps', type=int, default=5)
+    parser.add_argument('--num-epoch_neighbors', type=int, default=17)
+    parser.add_argument('--num-epoch-final', type=int, default=100)
+    
+    parser.add_argument('--seed', type=int, default=123)
+    
     return parser.parse_args()
-
-args = parse_args()
 
 # --
 # IO
@@ -68,8 +73,8 @@ def make_dataloaders():
         trainset, 
         batch_size=128, 
         shuffle=True, 
-        num_workers=8,
-        pin_memory=True
+        num_workers=4,
+        pin_memory=False
     )
     
     testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=False, transform=transform_test)
@@ -77,8 +82,8 @@ def make_dataloaders():
         testset, 
         batch_size=256, 
         shuffle=False, 
-        num_workers=8,
-        pin_memory=True,
+        num_workers=4,
+        pin_memory=False,
     )
     
     return trainloader, testloader
@@ -165,7 +170,7 @@ def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kw
 # --
 # Run
 
-def _mp_train_worker(models, model_ids, gpu_id, results, verbose=False, **kwargs):
+def _mp_train_worker(models, model_ids, results, **kwargs):
     trainloader, testloader = make_dataloaders()
     for model_id in model_ids:
         t = time()
@@ -220,17 +225,12 @@ def train_mp(models, num_gpus=2, **kwargs):
     return results
 
 # --
-# Make children
+# Run
 
-# Init
-num_neighbors = 8
-num_morphs = 5
-num_steps = 5
-num_epoch_neighbors = 17
-num_epoch_final = 100
-all_models = {}
+args = parse_args()
 
-set_seeds(123)
+set_seeds(args.seed)
+
 base_model = SeaNet({
     1 : (mm.MorphBCRLayer(3, 64, kernel_size=3, padding=1), 0),
     2 : (nn.MaxPool2d(2), 1),
@@ -240,39 +240,45 @@ base_model = SeaNet({
     6 : (mm.MorphFlatLinear(2048 * 4, 10), 5),
 }, input_shape=(3, 32, 32))
 
-all_models[-1] = train_mp({0 : base_model}, epochs=10, verbose=True)
+all_models = {-1 : train_mp({0 : base_model}, epochs=1, verbose=True)}
 best_model = copy.deepcopy(all_models[-1][0]['model'])
 
-# Create a population of neighbors
-neibs = {}
-neibs[0] = best_model
-while len(neibs) < num_neighbors:
-    try:
-        neibs[len(neibs)] = do_random_morph(best_model, n=num_morphs)
-    except:
-        pass
+for step in range(1, args.num_steps):
+    # Create a population of neighbors
+    neibs = {}
+    neibs[0] = best_model
+    while len(neibs) < args.num_neighbors:
+        try:
+            neibs[len(neibs)] = do_random_morph(best_model, n=args.num_morphs)
+        except KeyboardInterrupt:
+            raise
+        except:
+            pass
+        
+        print(('-'* 100) + " neib=" + str(len(neibs)), file=sys.stderr)
     
-    print(''.join(['-'] * 100), file=sys.stderr)
+    # Train (in parallel)
+    all_models[step] = train_mp(neibs, epochs=args.num_epoch_neighbors, verbose=False)
+    best_id = np.argmax([o['performance']['test_accs'][-1] for k,o in all_models[step].items()])
+    best_model = copy.deepcopy(all_models[step][best_id]['model'])
+    print(('+' * 100) + " step=" + str(step), file=sys.stderr)
+    
+    # >>
+    from rsub import *
+    from matplotlib import pyplot as plt
+    
+    _ = plt.plot(all_models[-1][0]['performance']['test_accs'], alpha=0.5)
+    
+    for k,v in all_models[step].items():
+        _ = plt.plot(
+            20 + step * args.num_epoch_neighbors + np.arange(args.num_epoch_neighbors),
+            v['performance']['test_accs'],
+            alpha=0.5,
+            label=k
+        )
+        
+    _ = plt.legend(loc='lower right')
+    show_plot()
 
-# Train
-for k, neib in neibs.items():
-    neib_model = neib['model'].cuda()
-    neibs[k] = train(neib_model, trainloader, testloader, epochs=num_epoch_neighbors, lr_init=lr_init)
-    neibs[k]['model'] = neibs[k]['model'].cpu()
-
-hist[len(hist)] = neibs
-
-best_id = np.argmax([o['test_accs'][-1] for k,o in neibs.items()])
-best_model = copy.deepcopy(neibs[best_id]['model'])
-
-#
 
 
-from rsub import *
-from matplotlib import pyplot as plt
-
-_ = plt.plot(orig_obj['train_accs'], alpha=1.)
-for k, obj in neibs.items():
-    _ = plt.plot(obj['train_accs'], label=k, alpha=0.25)
-
-show_plot()

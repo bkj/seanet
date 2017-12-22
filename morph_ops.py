@@ -18,8 +18,16 @@ from torch.nn import functional as F
 from morph_layers import *
 from helpers import colstring, to_numpy
 
+
+class InvalidMorphException(Exception):
+    pass
+
+
 def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
-    idx1, idx2 = idx if idx is not None else sorted(np.random.choice(model.top_layer, 2, replace=False))
+    if idx is None:
+        idx1, idx2 = model.random_nodes(n=2, allow_input=True)
+    else:
+        idx1, idx2 = idx
     
     print(colstring.blue("do_add_skip: %d -> %d" % (idx1, idx2)), file=sys.stderr)
     
@@ -27,7 +35,7 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
     l2_size = model(layer=idx2).size()
     
     if l1_size[-1] > l2_size[-1]:
-        raise Exception(colstring.red('do_add_skip: (l1_size[-1] > l2_size[-1]) -- can cause downstream problems'))
+        raise InvalidMorphException(colstring.red('do_add_skip: (l1_size[-1] > l2_size[-1]) -- can cause downstream problems'))
     
     # Add skip
     merge_node = model.add_skip(idx1, idx2, AddLayer())
@@ -40,7 +48,7 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
                 new_layer = MorphBCRLayer(l1_size[1], l2_size[1], kernel_size=3, padding=1)
                 idx1 = model.modify_edge(idx1, merge_node, new_layer)
             else:
-                raise Exception(colstring.red('do_add_skip: (l1_size[1] != l2_size[1]) and not fix_channels'))
+                raise InvalidMorphException(colstring.red('do_add_skip: (l1_size[1] != l2_size[1]) and not fix_channels'))
         
         # If different spatial extent, add max pooling
         if (l1_size[-1] != l2_size[-1]):
@@ -48,14 +56,17 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
                 scale = int(l1_size[-1] / l2_size[-1])
                 _ = model.modify_edge(idx1, merge_node, nn.MaxPool2d(scale))
             else:
-                raise Exception(colstring.red('do_add_skip: (l1_size[-1] != l2_size[-1]) and not fix_spatial'))
+                raise InvalidMorphException(colstring.red('do_add_skip: (l1_size[-1] != l2_size[-1]) and not fix_spatial'))
     
     model.compile()
     return model
 
 
 def do_cat_skip(model, idx=None, fix_spatial=True):
-    idx1, idx2 = idx if idx is not None else sorted(np.random.choice(model.top_layer, 2, replace=False))
+    if idx is None:
+        idx1, idx2 = model.random_nodes(n=2, allow_input=True)
+    else:
+        idx1, idx2 = idx
     
     print(colstring.blue("do_cat_skip: %d -> %d" % (idx1, idx2)), file=sys.stderr)
     
@@ -81,13 +92,17 @@ def do_cat_skip(model, idx=None, fix_spatial=True):
     new_layer.to_eye()
     model.modify_edge(merge_node, None, new_layer)
     
-    model.compile()
+    print('** do cat skip **')
+    model.pprint()
+    
+    model.compile(reorder=False)
+    
     return model
 
 
 def do_make_wider(model, idx=None, k=2):
     if idx is None:
-        idx = np.random.choice(range(1, model.top_layer), 1)[0]
+        idx = model.random_node(n=1, allow_input=False)[0]
     
     print(colstring.blue("do_make_wider: %d" % idx), file=sys.stderr)
     
@@ -107,19 +122,18 @@ def do_make_wider(model, idx=None, k=2):
             # If impossible, revert changes
             model = backup_model
             return model
-            raise Exception(colstring.red('do_make_wider: model.fix_shapes() has downstream conflicts'))
+            raise InvalidMorphException(colstring.red('do_make_wider: model.fix_shapes() has downstream conflicts'))
         
         model.compile()
         return model
         
     else:
-        raise Exception(colstring.red('do_make_wider: invalid layer type -> %s' % old_layer.__class__.__name__))
+        raise InvalidMorphException(colstring.red('do_make_wider: invalid layer type -> %s' % old_layer.__class__.__name__))
 
 
 def do_make_deeper(model, idx=None):
     if idx is None:
-        edges = list(model.get_edgelist())
-        idx2, idx1 = edges[np.random.choice(len(edges))]
+        idx2, idx1 = model.random_edge()
     else:
         idx1, idx2 = idx
     
@@ -142,7 +156,7 @@ def do_make_deeper(model, idx=None):
         return model
         
     else:
-        raise Exception(colstring.red("cannot make layer deeper -> %s" % old_layer.__class__.__name__))
+        raise InvalidMorphException(colstring.red("cannot make layer deeper -> %s" % old_layer.__class__.__name__))
 
 
 def _try_random_morph(model, assert_eye=True):
@@ -154,17 +168,19 @@ def _try_random_morph(model, assert_eye=True):
     try:
         morph = np.random.choice([do_add_skip, do_cat_skip, do_make_deeper, do_make_wider])
         new_model = morph(new_model)
-        new_pred = model()
+        new_pred = new_model()
         if assert_eye:
-            assert np.allclose(to_numpy(old_pred), to_numpy(old_pred))
+            assert np.allclose(to_numpy(new_pred), to_numpy(old_pred)), '_try_random_morph: assert_eye failed'
         
         return new_model, True
-    except Exception as e:
-        print(e, file=sys.stderr)
+    except InvalidMorphException as e:
+        print('_try_random_morph: invalid morph -> %s' % e, file=sys.stderr)
         return model, False
+    except:
+        raise
 
 
-def _do_random_morph(model, assert_eye=True):
+def _do_random_morph(model, assert_eye=True, max_failures=10):
     """ Keeps trying to apply morph until one works... or we hit a big error """
     
     model = model.cpu().eval()
@@ -177,7 +193,7 @@ def _do_random_morph(model, assert_eye=True):
         print(colstring.yellow('_try_random_morph invalid... trying again'))
         new_model, success = _try_random_morph(model, assert_eye=assert_eye)
         
-        if failures > 10:
+        if failures > max_failures:
             raise Exception('_do_random_morph failed completely... throwing error')
     
     return new_model
@@ -186,6 +202,7 @@ def _do_random_morph(model, assert_eye=True):
 def do_random_morph(model, n=1, assert_eye=True):
     """ applies N morphs """
     for _ in range(n):
+        print('morph=%d' % n)
         model = _do_random_morph(model, assert_eye=assert_eye)
     
     return model

@@ -40,9 +40,11 @@ def cond_replace(x, src, dst):
 def short_uuid(n=8):
     return ''.join(np.random.choice(list(letters), n))
 
+# --
+# SeaNet
 
 class SeaNet(nn.Module):
-    def __init__(self, graph, input_shape=(1, 28, 28), input_data=None):
+    def __init__(self, graph, input_shape=(1, 28, 28), output_layer=None, input_data=None):
         assert 0 not in graph.keys(), "SeaNet: 0 in graph.keys() -- 0 is reserved for data"
         
         super(SeaNet, self).__init__()
@@ -50,7 +52,8 @@ class SeaNet(nn.Module):
         self._id = short_uuid()
         
         self.graph = graph
-        self.top_layer = max(graph.keys())
+        if output_layer is None:
+            self.output_layer = max(graph.keys())
         
         # Register parameters
         for k,(layer, inputs) in self.graph.items():
@@ -64,14 +67,9 @@ class SeaNet(nn.Module):
             self._input_shape = input_data.size()[1:]
             self._input_data  = input_data
     
-    def get_id(self):
-        model_name = md5(str(self.graph).encode('utf-8')).hexdigest()
-        model_name += '-' + self._id
-        return model_name
-    
     def forward(self, x=None, layer=None):
         if layer is None:
-            layer = self.top_layer
+            layer = self.output_layer
         
         if x is None:
             self.graph[0] = self._input_data.clone()
@@ -81,6 +79,14 @@ class SeaNet(nn.Module):
         output = get(self.graph, layer)
         del self.graph[0]
         return output
+    
+    # --
+    # Helpers
+    
+    def get_id(self):
+        model_name = md5(str(self.graph).encode('utf-8')).hexdigest()
+        model_name += '-' + self._id
+        return model_name
     
     def pprint(self):
         if 0 in self.graph:
@@ -93,20 +99,17 @@ class SeaNet(nn.Module):
         dot_graph(self.graph)
         del self.graph[0]
     
-    def get_edgelist(self):
-        for k, (_, inputs) in self.graph.items():
-            if isinstance(inputs, int):
-                if inputs != 0:
-                    yield k, inputs
-            elif isinstance(inputs, list):
-                for inp in inputs:
-                    if inp != 0:
-                        yield k, inp
+    # --
+    # Compilation
     
-    def compile(self):
-        adjlist    = dict([(k, to_set(inputs)) for k,(_,inputs) in self.graph.items()])
-        node_order = [item for sublist in toposort(adjlist) for item in sublist]
-        lookup     = dict(zip(node_order, range(len(node_order))))
+    def compile(self, reorder=True):
+        if reorder:
+            adjlist    = dict([(k, to_set(inputs)) for k,(_,inputs) in self.graph.items()])
+            node_order = [item for sublist in toposort(adjlist) for item in sublist]
+            lookup     = dict(zip(node_order, range(len(node_order))))
+        else:
+            nodes = list(self.graph.keys()) + [0]
+            lookup = dict(zip(nodes, nodes))
         
         out = {}
         for k, (layer, inputs) in self.graph.items():
@@ -128,6 +131,34 @@ class SeaNet(nn.Module):
                 layer.allow_morph = True
                 _ = self(layer=k)
                 layer.allow_morph = False
+    
+    # --
+    # Sample from computational graph
+    
+    def get_edgelist(self):
+        for k, (_, inputs) in self.graph.items():
+            if isinstance(inputs, int):
+                if inputs != 0:
+                    yield k, inputs
+            elif isinstance(inputs, list):
+                for inp in inputs:
+                    if inp != 0:
+                        yield k, inp
+                        
+    def random_nodes(self, n=1, allow_input=True):
+        nodes = set(self.graph.keys())
+        nodes.remove(self.output_layer)
+        if allow_input:
+            nodes.add(0)
+        
+        return tuple(sorted(np.random.choice(list(nodes), n, replace=False)))
+    
+    def random_edge(self):
+        edges = list(self.get_edgelist())
+        return edges[np.random.choice(len(edges))]
+    
+    # --
+    # Graph modifications
     
     def modify_edge(self, idx1, idx2, new_layer):
         tmp_idx = 1000 + len(self.graph)
