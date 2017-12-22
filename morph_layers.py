@@ -12,7 +12,7 @@ import torch
 from torch import nn
 from torch.autograd import Variable
 
-torch.set_default_tensor_type('torch.DoubleTensor')
+from helpers import colstring
 
 class DummyDataLayer(nn.Module):
     def __init__(self, shape):
@@ -79,7 +79,7 @@ class MorphFlatLinear(MorphMixin, FlatLinear):
     def morph_in(self, x):
         new_features = x.view(x.size(0), -1).size(-1)
         
-        print('MorphFlatLinear: %d features -> %d features' % (self.in_features, new_features), file=sys.stderr)
+        print(colstring.green('MorphFlatLinear: %d features -> %d features' % (self.in_features, new_features)), file=sys.stderr)
         
         padding = torch.zeros((self.out_features, new_features - self.in_features))
         
@@ -90,7 +90,7 @@ class MorphFlatLinear(MorphMixin, FlatLinear):
 class MorphConv2d(MorphMixin, nn.Conv2d):
     def morph_in(self, x):
         new_channels = x.size(1)
-        print('MorphConv2d: %d channels -> %d channels' % (self.in_channels, new_channels), file=sys.stderr)
+        print(colstring.green('MorphConv2d: %d channels -> %d channels' % (self.in_channels, new_channels)), file=sys.stderr)
         
         # Pad weight
         padding = torch.zeros((self.out_channels, new_channels - self.in_channels) + self.kernel_size)
@@ -134,7 +134,7 @@ class MorphBatchNorm2d(MorphMixin, nn.BatchNorm2d):
     
     def morph_in(self, x):
         new_channels = x.size(1)
-        print('MorphBatchNorm2d: %d channels -> %d channels' % (self.num_features, new_channels), file=sys.stderr)
+        print(colstring.green('MorphBatchNorm2d: %d channels -> %d channels' % (self.num_features, new_channels)), file=sys.stderr)
         self.morph_out(new_channels)
     
     def morph_out(self, new_channels):
@@ -181,7 +181,6 @@ class MorphBCRLayer(MorphMixin, nn.Sequential):
         self.add_module('relu', nn.ReLU())
     
     def morph_in(self, x):
-        print('MorphBCRLayer: vv', file=sys.stderr)
         self.conv.morph_in(x)
         self.bn.morph_in(self.conv(x))
     

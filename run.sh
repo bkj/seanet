@@ -3,3 +3,6 @@
 # run.sh
 
 python main.py --outpath ./results/models/gen0 > ./results/performance/gen0
+
+
+Train initial model

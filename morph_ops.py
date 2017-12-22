@@ -16,9 +16,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from morph_layers import *
-from helpers import  colstring
-
-torch.set_default_tensor_type('torch.DoubleTensor')
+from helpers import colstring, to_numpy
 
 def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
     idx1, idx2 = idx if idx is not None else sorted(np.random.choice(model.top_layer, 2, replace=False))
@@ -47,7 +45,7 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
         # If different spatial extent, add max pooling
         if (l1_size[-1] != l2_size[-1]):
             if fix_spatial:
-                scale = l1_size[-1] / l2_size[-1]
+                scale = int(l1_size[-1] / l2_size[-1])
                 _ = model.modify_edge(idx1, merge_node, nn.MaxPool2d(scale))
             else:
                 raise Exception(colstring.red('do_add_skip: (l1_size[-1] != l2_size[-1]) and not fix_spatial'))
@@ -70,11 +68,12 @@ def do_cat_skip(model, idx=None, fix_spatial=True):
     # If different spatial extent, add max pooling
     if l1_size[-1] != l2_size[-1]:
         if l1_size[-1] > l2_size[-1]:
-            scale = l1_size[-1] / l2_size[-1]
+            scale = int(l1_size[-1] / l2_size[-1])
             maxpool_node = model.modify_edge(idx1, merge_node, nn.MaxPool2d(scale))
         else:
-            scale = l2_size[-1] / l1_size[-1]
+            scale = int(l2_size[-1] / l1_size[-1])
             maxpool_node = model.modify_edge(idx2, merge_node, nn.MaxPool2d(scale))
+    
     
     # 1x1 conv to fix output dim
     out_size = model(layer=merge_node).size()
@@ -144,3 +143,50 @@ def do_make_deeper(model, idx=None):
         
     else:
         raise Exception(colstring.red("cannot make layer deeper -> %s" % old_layer.__class__.__name__))
+
+
+def _try_random_morph(model, assert_eye=True):
+    """ Tries to apply a morph -- this fails alot, becaus many morphs are illegal """
+    if assert_eye:
+        old_pred = model()
+    
+    new_model = copy.deepcopy(model)
+    try:
+        morph = np.random.choice([do_add_skip, do_cat_skip, do_make_deeper, do_make_wider])
+        new_model = morph(new_model)
+        new_pred = model()
+        if assert_eye:
+            assert np.allclose(to_numpy(old_pred), to_numpy(old_pred))
+        
+        return new_model, True
+    except Exception as e:
+        print(e, file=sys.stderr)
+        return model, False
+
+
+def _do_random_morph(model, assert_eye=True):
+    """ Keeps trying to apply morph until one works... or we hit a big error """
+    
+    model = model.cpu().eval()
+    
+    new_model, success = _try_random_morph(model, assert_eye=assert_eye)
+    
+    failures = 0
+    while not success:
+        failures += 1
+        print(colstring.yellow('_try_random_morph invalid... trying again'))
+        new_model, success = _try_random_morph(model, assert_eye=assert_eye)
+        
+        if failures > 10:
+            raise Exception('_do_random_morph failed completely... throwing error')
+    
+    return new_model
+
+
+def do_random_morph(model, n=1, assert_eye=True):
+    """ applies N morphs """
+    for _ in range(n):
+        model = _do_random_morph(model, assert_eye=assert_eye)
+    
+    return model
+

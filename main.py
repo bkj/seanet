@@ -9,6 +9,7 @@ from __future__ import print_function, division
 import os
 import sys
 import json
+import copy
 import argparse
 import numpy as np
 
@@ -20,28 +21,22 @@ from torch.autograd import Variable
 import torchvision
 import torchvision.transforms as transforms
 
-from seanet import SeaNet
-import morph_ops as mo
-import morph_layers as mm
-
+from morph_ops import do_random_morph
 from lr import LRSchedule
 from utils import progress_bar
 from helpers import set_seeds, to_numpy, colstring
 
-torch.set_default_tensor_type('torch.DoubleTensor')
+# torch.set_default_tensor_type('torch.DoubleTensor')
 
 # --
 # Params
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    
     parser.add_argument('--outpath', type=str, default='./results/models/delete-me')
-    
     parser.add_argument('--epochs', type=int, default=20)
-    parser.add_argument('--lr-schedule', type=str, default='constant')
+    # parser.add_argument('--lr-schedule', type=str, default='constant')
     parser.add_argument('--lr-init', type=float, default=0.05)
-    parser.add_argument('--no-cuda', action="store_true")
     
     return parser.parse_args()
 
@@ -83,8 +78,8 @@ testloader = torch.utils.data.DataLoader(
 # --
 # Helpers
 
-def train(net, opt, lr_scheduler, epoch, trainloader):
-    _ = net.train()
+def train_epoch(model, opt, lr_scheduler, epoch, trainloader):
+    _ = model.train()
     train_loss = 0
     correct = 0
     total = 0
@@ -92,16 +87,14 @@ def train(net, opt, lr_scheduler, epoch, trainloader):
     batches_per_epoch = len(trainloader)
     
     for batch_idx, (data, targets) in enumerate(trainloader):
-        if not args.no_cuda:
-            data, targets = data.double().cuda(), targets.cuda()
-        
+        data, targets = data.cuda(), targets.cuda()
         data, targets = Variable(data), Variable(targets)
         
         # Set LR
         LRSchedule.set_lr(opt, lr_scheduler(epoch + batch_idx / batches_per_epoch))
         
         opt.zero_grad()
-        outputs = net(data)
+        outputs = model(data)
         loss = F.cross_entropy(outputs, targets)
         loss.backward()
         opt.step()
@@ -117,18 +110,16 @@ def train(net, opt, lr_scheduler, epoch, trainloader):
     return float(correct) / total
 
 
-def test(net, testloader):
-    _ = net.eval()
+def test_epoch(model, testloader):
+    _ = model.eval()
     test_loss = 0
     correct = 0
     total = 0
     for batch_idx, (data, targets) in enumerate(testloader):
-        if not args.no_cuda:
-            data, targets = data.double().cuda(), targets.cuda()
-        
+        data, targets = data.cuda(), targets.cuda()
         data, targets = Variable(data, volatile=True), Variable(targets)
         
-        outputs = net(data)
+        outputs = model(data)
         loss = F.cross_entropy(outputs, targets)
         
         test_loss += loss.data[0]
@@ -141,44 +132,101 @@ def test(net, testloader):
     
     return float(correct) / total
 
-
-# --
-# Define model
-
-set_seeds(123)
-net = SeaNet({
-    1 : (mm.MorphBCRLayer(3, 32, kernel_size=3, padding=1), 0),
-    2 : (nn.MaxPool2d(2), 1),
-    3 : (mm.MorphBCRLayer(32, 32, kernel_size=3, padding=1), 2),
-    4 : (nn.MaxPool2d(2), 3),
-    5 : (mm.MorphBCRLayer(32, 32, kernel_size=3, padding=1), 4),
-    6 : (mm.MorphFlatLinear(2048, 10), 5),
-}, input_shape=(3, 32, 32))
-
-if not args.no_cuda:
-    net = net.cuda()
-
-# --
-# Define optimizer
-
-lr_scheduler = getattr(LRSchedule, args.lr_schedule)(lr_init=args.lr_init, epochs=args.epochs)
-opt = torch.optim.SGD(net.parameters(), lr=lr_scheduler(0), momentum=0.9, weight_decay=5e-4)
+def train(model, epochs=1, lr_init=0.05, lr_min=0.0, period_length=None):
+    
+    if period_length is None:
+        period_length = epochs
+    
+    lr_scheduler = LRSchedule.sgdr(period_length=period_length, lr_init=lr_init, lr_min=lr_min)
+    opt = torch.optim.SGD(model.parameters(), lr=lr_scheduler(0), momentum=0.9, weight_decay=5e-4)
+    
+    train_accs, test_accs = [], []
+    for epoch in range(0, epochs):
+        print("Epoch=%d" % epoch, file=sys.stderr)
+        
+        train_acc = train_epoch(model, opt, lr_scheduler, epoch, trainloader)
+        test_acc = test_epoch(model, testloader)
+        
+        train_accs.append(train_acc)
+        test_accs.append(test_acc)
+        
+    return {
+        "model" : model,
+        "train_accs" : train_accs,
+        "test_accs" : test_accs,
+    }
 
 # --
 # Run
 
-train_accs, test_accs = [], []
-for epoch in range(0, args.epochs):
-    print("Epoch=%d" % epoch, file=sys.stderr)
-    
-    train_acc = train(net, opt, lr_scheduler, epoch, trainloader)
-    test_acc = test(net, testloader)
-    
-    train_accs.append(train_acc)
-    test_accs.append(test_acc)
-    print(json.dumps({'train_acc' : train_acc, 'test_acc' : test_acc}))
+from seanet import SeaNet
+import morph_layers as mm
 
-torch.save(net.state_dict(), args.outpath)
+set_seeds(123)
+def get_base_model():
+    return SeaNet({
+        1 : (mm.MorphBCRLayer(3, 64, kernel_size=3, padding=1), 0),
+        2 : (nn.MaxPool2d(2), 1),
+        3 : (mm.MorphBCRLayer(64, 128, kernel_size=3, padding=1), 2),
+        4 : (nn.MaxPool2d(2), 3),
+        5 : (mm.MorphBCRLayer(128, 128, kernel_size=3, padding=1), 4),
+        6 : (mm.MorphFlatLinear(2048 * 4, 10), 5),
+    }, input_shape=(3, 32, 32))
+
+model = get_base_model().cuda()
+
+orig_obj = train(model, epochs=20, lr_init=0.05)
 
 
+# --
+# Make children
 
+# Init
+num_neighbors = 8
+num_morphs = 5
+num_steps = 5
+num_epoch_neighbors = 17
+num_epoch_final = 100
+lr_init = 0.05
+
+hist = {
+    -1 : orig_obj
+}
+
+best_model = copy.deepcopy(orig_obj['model'].cpu())
+
+# Run
+# ...
+# Morph
+
+neibs = {}
+neibs[0] = {"model" : best_model}
+while len(neibs) < num_neighbors:
+    try:
+        neibs[len(neibs)] = {"model" : do_random_morph(best_model, n=num_morphs)}
+    except:
+        pass
+    print('--', file=sys.stderr)
+
+# Train
+for k, obj in neibs.items():
+    neib_model = obj['model'].cuda()
+    neibs[k] = train(neib_model, epochs=num_epoch_neighbors, lr_init=lr_init)
+    neibs[k]['model'] = neibs[k]['model'].cpu()
+
+hist[len(hist)] = neibs
+
+best_id = np.argmax([o['test_accs'][-1] for k,o in neibs.items()])
+best_model = copy.deepcopy(neibs[best_id]['model'])
+
+# # 
+
+
+from rsub import *
+from matplotlib import pyplot as plt
+
+_ = plt.plot(orig_obj['train_accs'], alpha=1.)
+for k, obj in neibs.items():
+    _ = plt.plot(obj['train_accs'], label=k, alpha=0.25)
+
+show_plot()
