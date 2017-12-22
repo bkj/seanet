@@ -124,4 +124,20 @@ model.pprint()
 
 # --
 
-print('passed')
+model = SeaNet({
+    1: (mm.MorphBCRLayer(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)), 0),                                                                                             
+    2: (mm.MorphBCRLayer(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)), 0),                                                                                             
+    3: (mm.AddLayer(), [1, 2]),                                                                                                                                                  
+    4: (nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), dilation=(1, 1)), 3),                                                                                                        
+    5: (mm.MorphBCRLayer (64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)), 4),                                                                                           
+    6: (mm.MorphBCRLayer (64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)), 4),                                                                                           
+    7: (mm.AddLayer(), [6, 5]),                                                                                                                                                  
+    8: (nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), dilation=(1, 1)), 7),                                                                                                        
+    9: (mm.MorphBCRLayer (128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)), 8),                                                                                          
+    10: (mm.MorphFlatLinear(in_features=8192, out_features=10), 9)
+}, input_shape=(3, 32, 32))
+
+model = do_add_skip(model, (0, 3))
+
+model()
+

@@ -12,7 +12,6 @@ from dask.dot import dot_graph
 from pprint import pprint
 from toposort import toposort
 
-
 from hashlib import md5
 from string import ascii_letters as letters
 
@@ -30,12 +29,10 @@ def to_set(x):
     return set(x) if isinstance(x, list) else set([x])
 
 def cond_replace(x, src, dst):
-    if isinstance(x, int):
-        return dst if x == src else x
-    elif isinstance(x, list):
+    if isinstance(x, list):
         return [dst if xx == src else xx for xx in x]
     else:
-        return x
+        return dst if x == src else x
 
 def short_uuid(n=8):
     return ''.join(np.random.choice(list(letters), n))
@@ -44,7 +41,7 @@ def short_uuid(n=8):
 # SeaNet
 
 class SeaNet(nn.Module):
-    def __init__(self, graph, input_shape=(1, 28, 28), output_layer=None, input_data=None):
+    def __init__(self, graph, input_shape=(1, 28, 28), input_data=None):
         assert 0 not in graph.keys(), "SeaNet: 0 in graph.keys() -- 0 is reserved for data"
         
         super(SeaNet, self).__init__()
@@ -52,8 +49,7 @@ class SeaNet(nn.Module):
         self._id = short_uuid()
         
         self.graph = graph
-        if output_layer is None:
-            self.output_layer = max(graph.keys())
+        self.output_layer = max(graph.keys())
         
         # Register parameters
         for k,(layer, inputs) in self.graph.items():
@@ -64,7 +60,7 @@ class SeaNet(nn.Module):
             self._input_shape = input_shape
             self._input_data  = Variable(torch.randn((10,) + self._input_shape))
         else:
-            self._input_shape = input_data.size()[1:]
+            self._input_shape = input_data.shape[1:]
             self._input_data  = input_data
     
     def forward(self, x=None, layer=None):
@@ -103,22 +99,18 @@ class SeaNet(nn.Module):
     # Compilation
     
     def compile(self, reorder=True):
-        if reorder:
-            adjlist    = dict([(k, to_set(inputs)) for k,(_,inputs) in self.graph.items()])
-            node_order = [item for sublist in toposort(adjlist) for item in sublist]
-            lookup     = dict(zip(node_order, range(len(node_order))))
-        else:
-            nodes = list(self.graph.keys()) + [0]
-            lookup = dict(zip(nodes, nodes))
+        adjlist    = dict([(k, to_set(inputs)) for k,(_,inputs) in self.graph.items()])
+        node_order = [item for sublist in toposort(adjlist) for item in sublist]
+        lookup     = dict(zip(node_order, range(len(node_order))))
         
         out = {}
         for k, (layer, inputs) in self.graph.items():
-            if isinstance(inputs, int):
-                out[lookup[k]] = (layer, lookup[inputs])
-            elif isinstance(inputs, list):
+            
+            if isinstance(inputs, list):
                 out[lookup[k]] = (layer, [lookup[inp] for inp in inputs])
             else:
-                out[lookup[k]] = (layer, inputs)
+                print(k, layer, inputs, lookup[inputs])
+                out[lookup[k]] = (layer, lookup[inputs])
         
         self.__init__(out, input_data=self._input_data)
         return lookup
@@ -137,21 +129,21 @@ class SeaNet(nn.Module):
     
     def get_edgelist(self):
         for k, (_, inputs) in self.graph.items():
-            if isinstance(inputs, int):
-                if inputs != 0:
-                    yield k, inputs
-            elif isinstance(inputs, list):
+            if isinstance(inputs, list):
                 for inp in inputs:
                     if inp != 0:
                         yield k, inp
-                        
+            else:
+                if inputs != 0:
+                    yield k, inputs
+                    
     def random_nodes(self, n=1, allow_input=True):
         nodes = set(self.graph.keys())
         nodes.remove(self.output_layer)
         if allow_input:
             nodes.add(0)
         
-        return tuple(sorted(np.random.choice(list(nodes), n, replace=False)))
+        return np.sort(np.random.choice(list(nodes), n, replace=False))
     
     def random_edge(self):
         edges = list(self.get_edgelist())

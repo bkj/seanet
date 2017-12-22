@@ -59,6 +59,7 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
                 raise InvalidMorphException(colstring.red('do_add_skip: (l1_size[-1] != l2_size[-1]) and not fix_spatial'))
     
     model.compile()
+    
     return model
 
 
@@ -85,7 +86,6 @@ def do_cat_skip(model, idx=None, fix_spatial=True):
             scale = int(l2_size[-1] / l1_size[-1])
             maxpool_node = model.modify_edge(idx2, merge_node, nn.MaxPool2d(scale))
     
-    
     # 1x1 conv to fix output dim
     out_size = model(layer=merge_node).size()
     new_layer = MorphConv2d(out_size[1], l2_size[1], kernel_size=1, padding=0)
@@ -95,14 +95,14 @@ def do_cat_skip(model, idx=None, fix_spatial=True):
     print('** do cat skip **')
     model.pprint()
     
-    model.compile(reorder=False)
+    model.compile()
     
     return model
 
 
 def do_make_wider(model, idx=None, k=2):
     if idx is None:
-        idx = model.random_node(n=1, allow_input=False)[0]
+        idx = model.random_nodes(n=1, allow_input=False)[0]
     
     print(colstring.blue("do_make_wider: %d" % idx), file=sys.stderr)
     
@@ -125,8 +125,8 @@ def do_make_wider(model, idx=None, k=2):
             raise InvalidMorphException(colstring.red('do_make_wider: model.fix_shapes() has downstream conflicts'))
         
         model.compile()
-        return model
         
+        return model
     else:
         raise InvalidMorphException(colstring.red('do_make_wider: invalid layer type -> %s' % old_layer.__class__.__name__))
 
@@ -153,6 +153,7 @@ def do_make_deeper(model, idx=None):
         _ = model.modify_edge(idx1, idx2, new_layer)
         
         model.compile()
+        
         return model
         
     else:
