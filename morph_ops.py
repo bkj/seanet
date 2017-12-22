@@ -34,7 +34,7 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
     l1_size = model(layer=idx1).size()
     l2_size = model(layer=idx2).size()
     
-    if l1_size[-1] > l2_size[-1]:
+    if l1_size[-1] < l2_size[-1]: # !! ??
         raise InvalidMorphException(colstring.red('do_add_skip: (l1_size[-1] > l2_size[-1]) -- can cause downstream problems'))
     
     # Add skip
@@ -74,6 +74,9 @@ def do_cat_skip(model, idx=None, fix_spatial=True):
     l1_size = model(layer=idx1).size()
     l2_size = model(layer=idx2).size()
     
+    if l1_size[-1] < l2_size[-1]: # !! ??
+        raise InvalidMorphException(colstring.red('do_add_skip: (l1_size[-1] > l2_size[-1]) -- can cause downstream problems'))
+    
     # Add skip
     merge_node = model.add_skip(idx1, idx2, CatLayer())
     
@@ -92,11 +95,7 @@ def do_cat_skip(model, idx=None, fix_spatial=True):
     new_layer.to_eye()
     model.modify_edge(merge_node, None, new_layer)
     
-    print('** do cat skip **')
-    model.pprint()
-    
     model.compile()
-    
     return model
 
 
@@ -125,7 +124,6 @@ def do_make_wider(model, idx=None, k=2):
             raise InvalidMorphException(colstring.red('do_make_wider: model.fix_shapes() has downstream conflicts'))
         
         model.compile()
-        
         return model
     else:
         raise InvalidMorphException(colstring.red('do_make_wider: invalid layer type -> %s' % old_layer.__class__.__name__))
@@ -153,7 +151,6 @@ def do_make_deeper(model, idx=None):
         _ = model.modify_edge(idx1, idx2, new_layer)
         
         model.compile()
-        
         return model
         
     else:

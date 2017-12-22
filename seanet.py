@@ -105,11 +105,9 @@ class SeaNet(nn.Module):
         
         out = {}
         for k, (layer, inputs) in self.graph.items():
-            
             if isinstance(inputs, list):
                 out[lookup[k]] = (layer, [lookup[inp] for inp in inputs])
             else:
-                print(k, layer, inputs, lookup[inputs])
                 out[lookup[k]] = (layer, lookup[inputs])
         
         self.__init__(out, input_data=self._input_data)
