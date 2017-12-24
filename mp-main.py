@@ -32,7 +32,8 @@ from helpers import set_seeds, to_numpy, colstring
 
 import torch.multiprocessing as mp
 
-# torch.set_default_tensor_type('torch.DoubleTensor')
+from rsub import *
+from matplotlib import pyplot as plt
 
 # --
 # Params
@@ -42,10 +43,10 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr-init', type=float, default=0.05)
     
-    parser.add_argument('--num-neighbors', type=int, default=8)
-    parser.add_argument('--num-morphs', type=int, default=5)
-    parser.add_argument('--num-steps', type=int, default=5)
-    parser.add_argument('--num-epoch_neighbors', type=int, default=17)
+    parser.add_argument('--num-neighbors', type=int, default=20)
+    parser.add_argument('--num-morphs', type=int, default=3)
+    parser.add_argument('--num-steps', type=int, default=10)
+    parser.add_argument('--num-epoch_neighbors', type=int, default=16)
     parser.add_argument('--num-epoch-final', type=int, default=100)
     
     parser.add_argument('--seed', type=int, default=123)
@@ -71,7 +72,7 @@ def make_dataloaders():
     trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=False, transform=transform_train)
     trainloader = torch.utils.data.DataLoader(
         trainset, 
-        batch_size=128, 
+        batch_size=256, 
         shuffle=True, 
         num_workers=4,
         pin_memory=False
@@ -156,7 +157,6 @@ def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kw
     
     train_accs, test_accs = [], []
     for epoch in range(0, epochs):
-        print("gpu_id=%d | Epoch=%d" % (gpu_id, epoch), file=sys.stderr)
         
         train_acc = train_epoch(model, opt, lr_scheduler, epoch, trainloader, gpu_id=gpu_id, verbose=verbose)
         test_acc = test_epoch(model, testloader, gpu_id=gpu_id, verbose=verbose)
@@ -190,7 +190,13 @@ def _mp_train_worker(models, model_ids, results, **kwargs):
             "performance" : performance,
         }
         
-        print("worker_train: finished model_id=%d in %f seconds" % (model_id, time() - t), file=sys.stderr)
+        print({
+            "model_id"          : model_id,
+            "time"              : time() - t,
+            "performance_train" : performance['train_accs'][-1],
+            "performance_test"  : performance['test_accs'][-1],
+            "gpu_id"            : kwargs['gpu_id'],
+        }, file=sys.stderr)
 
 
 def train_mp(models, num_gpus=2, **kwargs):
@@ -202,10 +208,10 @@ def train_mp(models, num_gpus=2, **kwargs):
     processes = []
     for gpu_id, chunk in enumerate(chunks):
         kwargs.update({
-            "models"     : models,
-            "model_ids"  : chunk,
-            "gpu_id"     : gpu_id, 
-            "results"    : results,
+            "models"    : models,
+            "model_ids" : chunk,
+            "gpu_id"    : gpu_id,
+            "results"   : results,
         })
         p = mp.Process(target=_mp_train_worker, kwargs=kwargs)
         p.start()
@@ -240,10 +246,10 @@ base_model = SeaNet({
     6 : (mm.MorphFlatLinear(2048 * 4, 10), 5),
 }, input_shape=(3, 32, 32))
 
-all_models = {-1 : train_mp({0 : base_model}, epochs=1, verbose=True)}
+all_models = {-1 : train_mp({0 : base_model}, epochs=args.epochs, verbose=True)}
 best_model = copy.deepcopy(all_models[-1][0]['model'])
 
-for step in range(1, args.num_steps):
+for step in range(args.num_steps):
     # Create a population of neighbors
     neibs = {}
     neibs[0] = best_model
@@ -262,23 +268,37 @@ for step in range(1, args.num_steps):
     best_id = np.argmax([o['performance']['test_accs'][-1] for k,o in all_models[step].items()])
     best_model = copy.deepcopy(all_models[step][best_id]['model'])
     print(('+' * 100) + " step=" + str(step), file=sys.stderr)
-    
-    # >>
-    from rsub import *
-    from matplotlib import pyplot as plt
-    
-    _ = plt.plot(all_models[-1][0]['performance']['test_accs'], alpha=0.5)
-    
-    for k,v in all_models[step].items():
-        _ = plt.plot(
-            20 + step * args.num_epoch_neighbors + np.arange(args.num_epoch_neighbors),
-            v['performance']['test_accs'],
-            alpha=0.5,
-            label=k
-        )
-        
-    _ = plt.legend(loc='lower right')
-    show_plot()
 
+print('done')
 
+# Try to plot...
+
+# _ = plt.plot(all_models[-1][0]['performance']['test_accs'], alpha=0.5)
+
+# for i in range(step):
+#     for k,v in all_models[i].items():
+#         _ = plt.plot(
+#             args.epochs + i * args.num_epoch_neighbors + np.arange(args.num_epoch_neighbors),
+#             v['performance']['test_accs'],
+#             alpha=0.5,
+#             label=k
+#         )
+
+# _ = plt.legend(loc='lower right')
+# show_plot()
+
+# best_so_far = []
+# for i in range(-1, args.num_steps):
+#     v = all_models[i]
+#     best = np.vstack([vv['performance']['test_accs'] for vv in v.values()]).max(axis=0)
+#     best_so_far.append(best)
+
+# best_so_far = np.hstack(best_so_far)
+
+# _ = plt.plot(best_so_far)
+# show_plot()
+
+import pandas as pd
+_ = plt.plot(pd.Series(best_so_far).rolling(window=50).max())
+show_plot()
 

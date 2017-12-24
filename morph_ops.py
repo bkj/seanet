@@ -199,8 +199,8 @@ def _do_random_morph(model, assert_eye=True, max_failures=10):
 
 def do_random_morph(model, n=1, assert_eye=True):
     """ applies N morphs """
-    for _ in range(n):
-        print('morph=%d' % n)
+    for i in range(n):
+        print('morph=%d' % i)
         model = _do_random_morph(model, assert_eye=assert_eye)
     
     return model
