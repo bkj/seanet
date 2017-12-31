@@ -43,10 +43,10 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr-init', type=float, default=0.05)
     
-    parser.add_argument('--num-neighbors', type=int, default=20)
-    parser.add_argument('--num-morphs', type=int, default=3)
-    parser.add_argument('--num-steps', type=int, default=10)
-    parser.add_argument('--num-epoch_neighbors', type=int, default=16)
+    parser.add_argument('--num-neighbors', type=int, default=8)
+    parser.add_argument('--num-morphs', type=int, default=5)
+    parser.add_argument('--num-steps', type=int, default=5)
+    parser.add_argument('--num-epoch_neighbors', type=int, default=17)
     parser.add_argument('--num-epoch-final', type=int, default=100)
     
     parser.add_argument('--seed', type=int, default=123)
@@ -69,16 +69,16 @@ def make_dataloaders():
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
     
-    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=False, transform=transform_train)
+    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
     trainloader = torch.utils.data.DataLoader(
         trainset, 
-        batch_size=256, 
+        batch_size=128, 
         shuffle=True, 
         num_workers=4,
         pin_memory=False
     )
     
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=False, transform=transform_test)
+    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
     testloader = torch.utils.data.DataLoader(
         testset, 
         batch_size=256, 
