@@ -8,11 +8,11 @@ from __future__ import print_function
 
 import numpy as np
 from dask import get
-from dask.dot import dot_graph
 from pprint import pprint
 from toposort import toposort
 
 from hashlib import md5
+from dask.dot import dot_graph
 from string import ascii_letters as letters
 
 import torch
