@@ -17,9 +17,9 @@ def to_numpy(x):
 
 def set_seeds(seed=123):
     _ = np.random.seed(seed)
-    _ = torch.manual_seed(seed)
+    _ = torch.manual_seed(seed + 1)
     if torch.cuda.is_available:
-        _ = torch.cuda.manual_seed(seed)
+        _ = torch.cuda.manual_seed(seed + 2)
 
 class colstring(object):
     BLUE = '\033[94m'

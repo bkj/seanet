@@ -1,3 +1,5 @@
+.performance/*
+.models/*
 .weights*
 results/*
 data/*

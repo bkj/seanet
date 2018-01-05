@@ -12,6 +12,8 @@ import json
 import copy
 import argparse
 import numpy as np
+from time import time
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -21,25 +23,35 @@ from torch.autograd import Variable
 import torchvision
 import torchvision.transforms as transforms
 
-from morph_ops import do_random_morph
+from seanet import SeaNet
+import morph_layers as mm
 from lr import LRSchedule
+from morph_ops import do_random_morph
 from utils import progress_bar
 from helpers import set_seeds, to_numpy, colstring
 
-# torch.set_default_tensor_type('torch.DoubleTensor')
+import torch.multiprocessing as mp
+
+from rsub import *
+from matplotlib import pyplot as plt
 
 # --
 # Params
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--outpath', type=str, default='./results/models/delete-me')
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr-init', type=float, default=0.05)
     
+    parser.add_argument('--num-neighbors', type=int, default=8)
+    parser.add_argument('--num-morphs', type=int, default=5)
+    parser.add_argument('--num-steps', type=int, default=5)
+    parser.add_argument('--num-epoch_neighbors', type=int, default=17)
+    parser.add_argument('--num-epoch-final', type=int, default=100)
+    
+    parser.add_argument('--seed', type=int, default=123)
+    
     return parser.parse_args()
-
-args = parse_args()
 
 # --
 # IO
@@ -57,22 +69,22 @@ def make_dataloaders():
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
     
-    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=False, transform=transform_train)
+    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
     trainloader = torch.utils.data.DataLoader(
         trainset, 
         batch_size=128, 
         shuffle=True, 
-        num_workers=8,
-        pin_memory=True
+        num_workers=4,
+        pin_memory=False
     )
     
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=False, transform=transform_test)
+    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
     testloader = torch.utils.data.DataLoader(
         testset, 
         batch_size=256, 
         shuffle=False, 
-        num_workers=8,
-        pin_memory=True,
+        num_workers=4,
+        pin_memory=False,
     )
     
     return trainloader, testloader
@@ -80,7 +92,7 @@ def make_dataloaders():
 # --
 # Helpers
 
-def train_epoch(model, opt, lr_scheduler, epoch, trainloader):
+def train_epoch(model, opt, lr_scheduler, epoch, trainloader, gpu_id=0, verbose=True):
     _ = model.train()
     train_loss = 0
     correct = 0
@@ -89,7 +101,7 @@ def train_epoch(model, opt, lr_scheduler, epoch, trainloader):
     batches_per_epoch = len(trainloader)
     
     for batch_idx, (data, targets) in enumerate(trainloader):
-        data, targets = Variable(data.cuda()), Variable(targets.cuda())
+        data, targets = Variable(data.cuda(gpu_id)), Variable(targets.cuda(gpu_id))
         
         # Set LR
         LRSchedule.set_lr(opt, lr_scheduler(epoch + batch_idx / batches_per_epoch))
@@ -105,19 +117,20 @@ def train_epoch(model, opt, lr_scheduler, epoch, trainloader):
         total += targets.size(0)
         correct += predicted.eq(targets.data).cpu().sum()
         
-        progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-            % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        if verbose:
+            progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
     
     return float(correct) / total
 
 
-def test_epoch(model, testloader):
+def test_epoch(model, testloader, gpu_id=0, verbose=True):
     _ = model.eval()
     test_loss = 0
     correct = 0
     total = 0
     for batch_idx, (data, targets) in enumerate(testloader):
-        data, targets = Variable(data.cuda(), volatile=True), Variable(targets.cuda())
+        data, targets = Variable(data.cuda(gpu_id), volatile=True), Variable(targets.cuda(gpu_id))
         
         outputs = model(data)
         loss = F.cross_entropy(outputs, targets)
@@ -127,101 +140,179 @@ def test_epoch(model, testloader):
         total += targets.size(0)
         correct += predicted.eq(targets.data).cpu().sum()
         
-        progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-            % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        if verbose:
+            progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
     
     return float(correct) / total
 
 
-def train(model, trainloader, testloader, epochs=1, lr_init=0.05, lr_min=0.0, period_length=None):
+def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kwargs):
+    if not kwargs.get('period_length', 0):
+        kwargs['period_length'] = epochs
     
-    if period_length is None:
-        period_length = epochs
-    
-    lr_scheduler = LRSchedule.sgdr(period_length=period_length, lr_init=lr_init, lr_min=lr_min)
+    model = model.cuda(gpu_id)
+    lr_scheduler = LRSchedule.sgdr(**kwargs)
     opt = torch.optim.SGD(model.parameters(), lr=lr_scheduler(0), momentum=0.9, weight_decay=5e-4)
     
     train_accs, test_accs = [], []
     for epoch in range(0, epochs):
-        print("Epoch=%d" % epoch, file=sys.stderr)
         
-        train_acc = train_epoch(model, opt, lr_scheduler, epoch, trainloader)
-        test_acc = test_epoch(model, testloader)
+        train_acc = train_epoch(model, opt, lr_scheduler, epoch, trainloader, gpu_id=gpu_id, verbose=verbose)
+        test_acc = test_epoch(model, testloader, gpu_id=gpu_id, verbose=verbose)
         
         train_accs.append(train_acc)
         test_accs.append(test_acc)
-        
-    return {
-        "model" : model,
-        "train_accs" : train_accs,
-        "test_accs" : test_accs,
-    }
+    
+    return model, {"train_accs" : train_accs, "test_accs" : test_accs}
 
 
 # --
 # Run
 
-from seanet import SeaNet
-import morph_layers as mm
+def _mp_train_worker(models, model_ids, results, **kwargs):
+    trainloader, testloader = make_dataloaders()
+    for model_id in model_ids:
+        t = time()
+        
+        model, performance = train(models[model_id], trainloader, testloader, **kwargs)
+        
+        # Save model to disk
+        model = model.cpu()
+        model_name = model.get_id() + datetime.now().strftime('-%Y%m%d_%H%M%S')
+        weight_path = os.path.join('.weights', model_name)
+        torch.save(model.state_dict(), weight_path)
+        del model
+        
+        results[model_id] = {
+            "model"       : None,
+            "weight_path" : weight_path,
+            "performance" : performance,
+        }
+        
+        print({
+            "model_id"          : model_id,
+            "time"              : time() - t,
+            "performance_train" : performance['train_accs'][-1],
+            "performance_test"  : performance['test_accs'][-1],
+            "gpu_id"            : kwargs['gpu_id'],
+        }, file=sys.stderr)
 
-set_seeds(123)
 
-model = SeaNet({
+def train_mp(models, num_gpus=2, **kwargs):
+    manager = mp.Manager()
+    results = manager.dict()
+    
+    chunks = np.array_split(list(models.keys()), num_gpus)
+    
+    processes = []
+    for gpu_id, chunk in enumerate(chunks):
+        kwargs.update({
+            "models"    : models,
+            "model_ids" : chunk,
+            "gpu_id"    : gpu_id,
+            "results"   : results,
+        })
+        p = mp.Process(target=_mp_train_worker, kwargs=kwargs)
+        p.start()
+        processes.append(p)
+    
+    for p in processes:
+        p.join()
+    
+    # Load state dicts from disk
+    results = dict(results)
+    for k in models.keys():
+        models[k].load_state_dict(torch.load(results[k]['weight_path']))
+        results[k]['model'] = models[k]
+    
+    del models
+    
+    return results
+
+# --
+# Run
+
+args = parse_args()
+
+set_seeds(args.seed)
+
+base_model = SeaNet({
     1 : (mm.MorphBCRLayer(3, 64, kernel_size=3, padding=1), 0),
     2 : (nn.MaxPool2d(2), 1),
     3 : (mm.MorphBCRLayer(64, 128, kernel_size=3, padding=1), 2),
     4 : (nn.MaxPool2d(2), 3),
     5 : (mm.MorphBCRLayer(128, 128, kernel_size=3, padding=1), 4),
     6 : (mm.MorphFlatLinear(2048 * 4, 10), 5),
-}, input_shape=(3, 32, 32)).cuda()
+}, input_shape=(3, 32, 32))
 
-trainloader, testloader = make_dataloaders()
+all_models = {-1 : train_mp({0 : base_model}, epochs=args.epochs, verbose=True)}
+best_model = copy.deepcopy(all_models[-1][0]['model'])
 
-hist[-1] = train(model, trainloader, testloader, epochs=args.epochs, lr_init=args.lr_init)
-
-
-# --
-# Make children
-
-# Init
-num_neighbors = 8
-num_morphs = 5
-num_steps = 5
-num_epoch_neighbors = 17
-num_epoch_final = 100
-
-best_model = copy.deepcopy(hist[-1]['model'].cpu())
-
-# Morph
-neibs = {}
-neibs[0] = {"model" : best_model}
-while len(neibs) < num_neighbors:
-    try:
-        neibs[len(neibs)] = {"model" : do_random_morph(best_model, n=num_morphs)}
-    except:
-        pass
+for step in range(args.num_steps):
+    # Create a population of neighbors
+    neibs = {}
+    neibs[0] = best_model
+    while len(neibs) < args.num_neighbors:
+        try:
+            neibs[len(neibs)] = do_random_morph(best_model, n=args.num_morphs)
+        except KeyboardInterrupt:
+            raise
+        except:
+            pass
+        
+        print(('-'* 100) + " neib=" + str(len(neibs)), file=sys.stderr)
     
-    print('--', file=sys.stderr)
+    # Train (in parallel)
+    all_models[step] = train_mp(neibs, epochs=args.num_epoch_neighbors, verbose=False)
+    best_id = np.argmax([o['performance']['test_accs'][-1] for k,o in all_models[step].items()])
+    best_model = copy.deepcopy(all_models[step][best_id]['model'])
+    print(('+' * 100) + " step=" + str(step), file=sys.stderr)
 
-# Train
-for k, neib in neibs.items():
-    neib_model = neib['model'].cuda()
-    neibs[k] = train(neib_model, trainloader, testloader, epochs=num_epoch_neighbors, lr_init=lr_init)
-    neibs[k]['model'] = neibs[k]['model'].cpu()
+print('done')
 
-hist[len(hist)] = neibs
+# Try to plot...
 
-best_id = np.argmax([o['test_accs'][-1] for k,o in neibs.items()])
-best_model = copy.deepcopy(neibs[best_id]['model'])
+# _ = plt.plot(all_models[-1][0]['performance']['test_accs'], alpha=0.5)
 
-#
+# for i in range(step):
+#     for k,v in all_models[i].items():
+#         _ = plt.plot(
+#             args.epochs + i * args.num_epoch_neighbors + np.arange(args.num_epoch_neighbors),
+#             v['performance']['test_accs'],
+#             alpha=0.5,
+#             label=k
+#         )
 
+# _ = plt.legend(loc='lower right')
+# show_plot()
 
-from rsub import *
-from matplotlib import pyplot as plt
+# best_so_far = []
+# for i in range(-1, args.num_steps):
+#     v = all_models[i]
+#     best = np.vstack([vv['performance']['test_accs'] for vv in v.values()]).max(axis=0)
+#     best_so_far.append(best)
 
-_ = plt.plot(orig_obj['train_accs'], alpha=1.)
-for k, obj in neibs.items():
-    _ = plt.plot(obj['train_accs'], label=k, alpha=0.25)
+# best_so_far = np.hstack(best_so_far)
 
-show_plot()
+# _ = plt.plot(best_so_far)
+# show_plot()
+
+# import pandas as pd
+# _ = plt.plot(pd.Series(best_so_far).rolling(window=50).max())
+# show_plot()
+
+# >>> pprint([(k,sorted([v['performance']['test_accs'][-1] for v in a.values()])) for k,a in all_models.items()])
+# [(0, [0.1, 0.1, 0.1, 0.1, 0.8697, 0.8803, 0.8896, 0.8918]),
+#  (1, [0.1, 0.895, 0.8989, 0.9014, 0.9021, 0.9022, 0.9032, 0.9071]),
+#  (2, [0.1, 0.9118, 0.914, 0.9144, 0.9153, 0.9156, 0.9156, 0.9174]),
+#  (3, [0.1, 0.8425, 0.9172, 0.9197, 0.9227, 0.9233, 0.9238, 0.9267]),
+#  (4, [0.9274, 0.9292, 0.9302, 0.9306, 0.9307, 0.9308, 0.9308, 0.9314]),
+#  (-1, [0.8586])]
+# >>> pprint([(k,sorted([v['performance']['train_accs'][-1] for v in a.values()])) for k,a in all_models.items()])
+# [(0, [0.1, 0.1, 0.1, 0.1, 0.91286, 0.91672, 0.93082, 0.93318]),
+#  (1, [0.1, 0.9347, 0.9396, 0.9452, 0.94558, 0.94598, 0.94802, 0.95962]),
+#  (2, [0.1, 0.97418, 0.97622, 0.97638, 0.97642, 0.97652, 0.97748, 0.97986]),
+#  (3, [0.1, 0.85376, 0.97278, 0.97388, 0.98156, 0.9858, 0.98682, 0.98756]),
+#  (4, [0.98702, 0.98896, 0.99012, 0.99056, 0.99058, 0.99078, 0.99138, 0.99142]),
+#  (-1, [0.88328])]
