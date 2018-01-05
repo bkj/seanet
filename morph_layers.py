@@ -10,7 +10,7 @@ import sys
 
 import torch
 from torch import nn
-fro mtorch.nn import MaxPool2d
+from torch.nn import MaxPool2d
 from torch.autograd import Variable
 
 from helpers import colstring
