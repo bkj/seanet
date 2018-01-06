@@ -11,8 +11,6 @@ import sys
 import copy
 import argparse
 import numpy as np
-from time import time
-from datetime import datetime
 
 from seanet import SeaNet
 import morph_layers as mm
@@ -25,7 +23,7 @@ from trainer import train_mp
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--run-name', type=str, required=True)
+    parser.add_argument('--run-name', type=str, default='regression-test-0')
     
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr-init', type=float, default=0.05)
@@ -39,7 +37,6 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=123)
     
     return parser.parse_args()
-
 
 
 # --
@@ -90,21 +87,5 @@ for step in range(args.num_steps):
     )
     best_id = np.argmax([o['performance']['test_accs'][-1] for k,o in all_models[step].items()])
     best_model = copy.deepcopy(all_models[step][best_id]['model'])
-    print('best_model:')
-    print(best_model)
-
-
-# >>> pprint([(k,sorted([v['performance']['test_accs'][-1] for v in a.values()])) for k,a in all_models.items()])
-# [(0, [0.1, 0.1, 0.1, 0.1, 0.8697, 0.8803, 0.8896, 0.8918]),
-#  (1, [0.1, 0.895, 0.8989, 0.9014, 0.9021, 0.9022, 0.9032, 0.9071]),
-#  (2, [0.1, 0.9118, 0.914, 0.9144, 0.9153, 0.9156, 0.9156, 0.9174]),
-#  (3, [0.1, 0.8425, 0.9172, 0.9197, 0.9227, 0.9233, 0.9238, 0.9267]),
-#  (4, [0.9274, 0.9292, 0.9302, 0.9306, 0.9307, 0.9308, 0.9308, 0.9314]),
-#  (-1, [0.8586])]
-# >>> pprint([(k,sorted([v['performance']['train_accs'][-1] for v in a.values()])) for k,a in all_models.items()])
-# [(0, [0.1, 0.1, 0.1, 0.1, 0.91286, 0.91672, 0.93082, 0.93318]),
-#  (1, [0.1, 0.9347, 0.9396, 0.9452, 0.94558, 0.94598, 0.94802, 0.95962]),
-#  (2, [0.1, 0.97418, 0.97622, 0.97638, 0.97642, 0.97652, 0.97748, 0.97986]),
-#  (3, [0.1, 0.85376, 0.97278, 0.97388, 0.98156, 0.9858, 0.98682, 0.98756]),
-#  (4, [0.98702, 0.98896, 0.99012, 0.99056, 0.99058, 0.99078, 0.99138, 0.99142]),
-#  (-1, [0.88328])]
+    print('best_model:', file=sys.stderr)
+    print(best_model, file=sys.stderr)

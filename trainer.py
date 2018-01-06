@@ -4,6 +4,14 @@
     trainer.py
 """
 
+from __future__ import print_function, division
+
+import os
+import sys
+import numpy as np
+from time import time
+from datetime import datetime
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,6 +19,7 @@ from torch.autograd import Variable
 
 import torchvision
 import torchvision.transforms as transforms
+
 from lr import LRSchedule
 from utils import progress_bar
 import torch.multiprocessing as mp
@@ -119,6 +128,7 @@ def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kw
     
     train_accs, test_accs = [], []
     for epoch in range(0, epochs):
+        print('epoch=%d' % epoch, file=sys.stderr)
         
         train_acc = train_epoch(model, opt, lr_scheduler, epoch, trainloader, gpu_id=gpu_id, verbose=verbose)
         test_acc = test_epoch(model, testloader, gpu_id=gpu_id, verbose=verbose)
@@ -132,7 +142,7 @@ def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kw
 # --
 # Run
 
-def _mp_train_worker(models, model_ids, results, **kwargs):
+def _mp_train_worker(run_name, models, model_ids, results, **kwargs):
     trainloader, testloader = make_dataloaders()
     for model_id in model_ids:
         t = time()
@@ -161,7 +171,7 @@ def _mp_train_worker(models, model_ids, results, **kwargs):
         }, file=sys.stderr)
 
 
-def train_mp(models, num_gpus=2, **kwargs):
+def train_mp(run_name, models, num_gpus=2, **kwargs):
     manager = mp.Manager()
     results = manager.dict()
     
