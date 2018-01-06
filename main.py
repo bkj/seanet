@@ -11,6 +11,7 @@ import sys
 import copy
 import argparse
 import numpy as np
+from time import time
 
 from seanet import SeaNet
 import morph_layers as mm
@@ -64,8 +65,9 @@ all_models = {-1 : train_mp(
 
 best_model = copy.deepcopy(all_models[-1][0]['model'])
 
+start_time = time()
 for step in range(args.num_steps):
-    print(('+'* 100) + " step=" + str(step), file=sys.stderr)
+    print(('+'* 100) + " step=%d | %fs" % (step, time() - start_time), file=sys.stderr)
     
     neibs = {0 : best_model}
     while len(neibs) < args.num_neighbors:

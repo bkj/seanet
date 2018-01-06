@@ -8,6 +8,7 @@ from __future__ import print_function, division
 
 import os
 import sys
+import json
 import numpy as np
 from time import time
 from datetime import datetime
@@ -20,6 +21,7 @@ from torch.autograd import Variable
 import torchvision
 import torchvision.transforms as transforms
 
+from seanet import SeaNet
 from lr import LRSchedule
 from utils import progress_bar
 import torch.multiprocessing as mp
@@ -177,7 +179,7 @@ def _mp_train_worker(run_name, models, model_ids, results, **kwargs):
             "model_id"          : model_id,
             "time"              : time() - t,
             "performance_train" : performance['train_accs'][-1],
-            "performance_val"   : performance['val_accs'][-1],
+            # "performance_val"   : performance['val_accs'][-1],
             "performance_test"  : performance['test_accs'][-1],
             "gpu_id"            : kwargs['gpu_id'],
             "timestamp"         : timestamp,
