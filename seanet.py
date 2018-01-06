@@ -6,12 +6,12 @@
 
 from __future__ import print_function
 
+import _pickle as cPickle
 import numpy as np
 from dask import get
+from hashlib import md5
 from pprint import pprint
 from toposort import toposort
-
-from hashlib import md5
 from dask.dot import dot_graph
 from string import ascii_letters as letters
 
@@ -94,6 +94,17 @@ class SeaNet(nn.Module):
         self.graph[0] = 'data'
         dot_graph(self.graph)
         del self.graph[0]
+
+    def save(self, filename):
+        cPickle.dump({
+            "graph" : self.graph,
+            "input_data" : self._input_data
+        }, open(filename, 'wb'))
+    
+    @classmethod
+    def load(cls, filename):
+        tmp = cPickle.load(open(filename, 'rb'))
+        return cls(graph=tmp['graph'], input_data=tmp['input_data'])
     
     # --
     # Compilation
