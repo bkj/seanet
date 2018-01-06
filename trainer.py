@@ -136,7 +136,7 @@ def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kw
         train_accs.append(train_acc)
         test_accs.append(test_acc)
     
-    return model, {"train_accs" : train_accs, "test_accs" : test_accs}
+    return model.cpu(), {"train_accs" : train_accs, "test_accs" : test_accs}
 
 
 # --
@@ -147,31 +147,51 @@ def _mp_train_worker(run_name, models, model_ids, results, **kwargs):
     for model_id in model_ids:
         t = time()
         
+        # --
+        # Training
+        
         model, performance = train(models[model_id], trainloader, testloader, **kwargs)
         
-        # Save model to disk
-        model = model.cpu()
-        model_name = model.get_id() + datetime.now().strftime('-%Y%m%d_%H%M%S')
-        weight_path = os.path.join('.weights', model_name)
-        torch.save(model.state_dict(), weight_path)
-        del model
+        # --
+        # Logging
         
+        model_name = model.get_id() + datetime.now().strftime('-%Y%m%d_%H%M%S')
+        model_path = os.path.join('results/models', model_name)
+        log_path = os.path.join('results/logs', run_name, model_name)
+        torch.save(model.state_dict(), model_path)
+        timestamp = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
         results[model_id] = {
+            "run_name"    : run_name,
             "model"       : None,
-            "weight_path" : weight_path,
+            "model_path"  : model_path,
+            "log_path"    : log_path,
             "performance" : performance,
+            "timestamp"   : timestamp,
         }
         
+        json.dump(results[model_id], open(log_path, 'w'))
+        model.save(model_path)
+        
         print({
+            "run_name"          : run_name,
             "model_id"          : model_id,
             "time"              : time() - t,
             "performance_train" : performance['train_accs'][-1],
+            "performance_val"   : performance['val_accs'][-1],
             "performance_test"  : performance['test_accs'][-1],
             "gpu_id"            : kwargs['gpu_id'],
+            "timestamp"         : timestamp,
         }, file=sys.stderr)
+        
+        del model
+
 
 
 def train_mp(run_name, models, num_gpus=2, **kwargs):
+    for d in ['results/models', 'results/logs']:
+        if not os.path.exists(os.path.join(d, run_name)):
+            os.makedirs(os.path.join(d, run_name))
+    
     manager = mp.Manager()
     results = manager.dict()
     
@@ -180,6 +200,7 @@ def train_mp(run_name, models, num_gpus=2, **kwargs):
     processes = []
     for gpu_id, chunk in enumerate(chunks):
         kwargs.update({
+            "run_name"  : run_name,
             "models"    : models,
             "model_ids" : chunk,
             "gpu_id"    : gpu_id,
@@ -192,12 +213,8 @@ def train_mp(run_name, models, num_gpus=2, **kwargs):
     for p in processes:
         p.join()
     
-    # Load state dicts from disk
     results = dict(results)
     for k in models.keys():
-        models[k].load_state_dict(torch.load(results[k]['weight_path']))
-        results[k]['model'] = models[k]
-    
-    del models
+        results[k]['model'] = SeaNet.load(results[k]['model_path'])
     
     return results
