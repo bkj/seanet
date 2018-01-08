@@ -47,6 +47,10 @@ args = parse_args()
 
 set_seeds(args.seed)
 
+for d in ['results/models', 'results/logs']:
+    if not os.path.exists(os.path.join(d, args.run_name)):
+        os.makedirs(os.path.join(d, args.run_name))
+
 base_model = SeaNet({
     1 : (mm.MorphBCRLayer(3, 64, kernel_size=3, padding=1), 0),
     2 : (mm.MaxPool2d(2), 1),
@@ -58,6 +62,7 @@ base_model = SeaNet({
 
 all_models = {-1 : train_mp(
     run_name=args.run_name,
+    step_id=-1,
     models={0 : base_model},
     epochs=args.epochs,
     verbose=True
@@ -83,6 +88,7 @@ for step in range(args.num_steps):
     # Train (in parallel)
     all_models[step] = train_mp(
         run_name=args.run_name,
+        step_id=step,
         models=neibs,
         epochs=args.num_epoch_neighbors,
         verbose=False,

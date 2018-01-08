@@ -144,7 +144,7 @@ def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kw
 # --
 # Run
 
-def _mp_train_worker(run_name, models, model_ids, results, **kwargs):
+def _mp_train_worker(run_name, step_id, models, model_ids, results, **kwargs):
     trainloader, testloader = make_dataloaders()
     for model_id in model_ids:
         t = time()
@@ -163,12 +163,16 @@ def _mp_train_worker(run_name, models, model_ids, results, **kwargs):
         torch.save(model.state_dict(), model_path)
         timestamp = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
         results[model_id] = {
-            "run_name"    : run_name,
-            "model"       : None,
-            "model_path"  : model_path,
-            "log_path"    : log_path,
+            "timestamp"   : str(timestamp),
+            "run_name"    : str(run_name),
+            "step_id"     : int(step_id),
+            "model_id"    : str(model_id),
+            "model_path"  : str(model_path),
+            "log_path"    : str(log_path),
+            
             "performance" : performance,
-            "timestamp"   : timestamp,
+            
+            "model"       : None,
         }
         
         json.dump(results[model_id], open(log_path, 'w'))
@@ -189,10 +193,7 @@ def _mp_train_worker(run_name, models, model_ids, results, **kwargs):
 
 
 
-def train_mp(run_name, models, num_gpus=2, **kwargs):
-    for d in ['results/models', 'results/logs']:
-        if not os.path.exists(os.path.join(d, run_name)):
-            os.makedirs(os.path.join(d, run_name))
+def train_mp(run_name, step_id, models, num_gpus=2, **kwargs):
     
     manager = mp.Manager()
     results = manager.dict()
@@ -203,6 +204,7 @@ def train_mp(run_name, models, num_gpus=2, **kwargs):
     for gpu_id, chunk in enumerate(chunks):
         kwargs.update({
             "run_name"  : run_name,
+            "step_id"   : step_id,
             "models"    : models,
             "model_ids" : chunk,
             "gpu_id"    : gpu_id,
