@@ -2,7 +2,5 @@
 
 # run.sh
 
-python main.py --outpath ./results/models/gen0 > ./results/performance/gen0
-
-
-Train initial model
+python main.py --run-name val-0.8 --train-size 0.8
+python main.py --run-name val-1.0

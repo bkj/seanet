@@ -24,7 +24,7 @@ from trainer import train_mp
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--run-name', type=str, default='regression-test-0')
+    parser.add_argument('--run-name', type=str, default='val-split-0')
     
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr-init', type=float, default=0.05)
@@ -35,6 +35,7 @@ def parse_args():
     parser.add_argument('--num-epoch-neighbors', type=int, default=17)
     parser.add_argument('--num-epoch-final', type=int, default=100)
     
+    parser.add_argument('--train-size', type=float, default=0.8)
     parser.add_argument('--seed', type=int, default=123)
     
     return parser.parse_args()
@@ -44,12 +45,15 @@ def parse_args():
 # Run
 
 args = parse_args()
+print(args, file=sys.stderr)
 
 set_seeds(args.seed)
 
 for d in ['results/models', 'results/logs']:
-    if not os.path.exists(os.path.join(d, args.run_name)):
-        os.makedirs(os.path.join(d, args.run_name))
+    d_run = os.path.join(d, args.run_name)
+    assert not os.path.exists(d_run), '%s already exists!' % d_run
+    _ = os.makedirs(d_run)
+
 
 base_model = SeaNet({
     1 : (mm.MorphBCRLayer(3, 64, kernel_size=3, padding=1), 0),
@@ -64,6 +68,7 @@ all_models = {-1 : train_mp(
     run_name=args.run_name,
     step_id=-1,
     models={0 : base_model},
+    train_size=args.train_size,
     epochs=args.epochs,
     verbose=True
 )}
@@ -90,10 +95,11 @@ for step in range(args.num_steps):
         run_name=args.run_name,
         step_id=step,
         models=neibs,
+        train_size=args.train_size,
         epochs=args.num_epoch_neighbors,
         verbose=False,
     )
-    best_id = np.argmax([o['performance']['test_accs'][-1] for k,o in all_models[step].items()])
+    best_id = np.argmax([o['performance'][-1]['test'] for k,o in all_models[step].items()])
     best_model = copy.deepcopy(all_models[step][best_id]['model'])
     print('best_model:', file=sys.stderr)
     print(best_model, file=sys.stderr)

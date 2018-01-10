@@ -12,6 +12,8 @@ import json
 import numpy as np
 from time import time
 from datetime import datetime
+from collections import defaultdict
+from sklearn.model_selection import train_test_split
 
 import torch
 import torch.nn as nn
@@ -26,10 +28,13 @@ from lr import LRSchedule
 from utils import progress_bar
 import torch.multiprocessing as mp
 
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 # --
 # IO
 
-def make_dataloaders():
+def make_dataloaders(train_size, train_batch_size=128, eval_batch_size=256, num_workers=8, seed=123123):
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
@@ -42,38 +47,48 @@ def make_dataloaders():
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
     
-    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
-    trainloader = torch.utils.data.DataLoader(
-        trainset, 
-        batch_size=128, 
-        shuffle=True, 
-        num_workers=4,
-        pin_memory=False
-    )
+    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=False, transform=transform_train)
+    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=False, transform=transform_test)
     
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+    if train_size < 1:
+        train_inds, val_inds = train_test_split(np.arange(len(trainset)), train_size=train_size, random_state=seed)
+        trainloader = torch.utils.data.DataLoader(
+            trainset, batch_size=train_batch_size, num_workers=num_workers, pin_memory=True,
+            sampler=torch.utils.data.sampler.SubsetRandomSampler(train_inds),
+        )
+        
+        valloader = torch.utils.data.DataLoader(
+            trainset, batch_size=eval_batch_size, num_workers=num_workers, pin_memory=True,
+            sampler=torch.utils.data.sampler.SubsetRandomSampler(val_inds),
+        )
+    else:
+        trainloader = torch.utils.data.DataLoader(
+            trainset, batch_size=train_batch_size, num_workers=num_workers, pin_memory=True,
+            shuffle=True,
+        )
+        
+        valloader = None
+    
     testloader = torch.utils.data.DataLoader(
-        testset, 
-        batch_size=256, 
-        shuffle=False, 
-        num_workers=4,
-        pin_memory=False,
+        testset, batch_size=eval_batch_size, num_workers=num_workers, pin_memory=True,
+        shuffle=False,
     )
     
-    return trainloader, testloader
+    return {
+        "train" : trainloader,
+        "test" : testloader,
+        "val" : valloader,
+    }
+
 
 # --
 # Helpers
 
-def train_epoch(model, opt, lr_scheduler, epoch, trainloader, gpu_id=0, verbose=True):
+def train_epoch(model, opt, lr_scheduler, epoch, dataloader, gpu_id=0, verbose=True):
     _ = model.train()
-    train_loss = 0
-    correct = 0
-    total = 0
-    
-    batches_per_epoch = len(trainloader)
-    
-    for batch_idx, (data, targets) in enumerate(trainloader):
+    batches_per_epoch = len(dataloader)
+    train_loss, correct, total = 0, 0, 0
+    for batch_idx, (data, targets) in enumerate(dataloader):
         data, targets = Variable(data.cuda(gpu_id)), Variable(targets.cuda(gpu_id))
         
         # Set LR
@@ -91,36 +106,35 @@ def train_epoch(model, opt, lr_scheduler, epoch, trainloader, gpu_id=0, verbose=
         correct += predicted.eq(targets.data).cpu().sum()
         
         if verbose:
-            progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+            progress_bar(batch_idx, batches_per_epoch, 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                 % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
     
     return float(correct) / total
 
 
-def test_epoch(model, testloader, gpu_id=0, verbose=True):
+def eval_epoch(model, dataloader, gpu_id=0, verbose=True):
     _ = model.eval()
-    test_loss = 0
-    correct = 0
-    total = 0
-    for batch_idx, (data, targets) in enumerate(testloader):
+    batches_per_epoch = len(dataloader)
+    eval_loss, correct, total = 0, 0, 0
+    for batch_idx, (data, targets) in enumerate(dataloader):
         data, targets = Variable(data.cuda(gpu_id), volatile=True), Variable(targets.cuda(gpu_id))
         
         outputs = model(data)
         loss = F.cross_entropy(outputs, targets)
         
-        test_loss += loss.data[0]
+        eval_loss += loss.data[0]
         _, predicted = torch.max(outputs.data, 1)
         total += targets.size(0)
         correct += predicted.eq(targets.data).cpu().sum()
         
         if verbose:
-            progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+            progress_bar(batch_idx, batches_per_epoch, 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                % (eval_loss/(batch_idx+1), 100.*correct/total, correct, total))
     
     return float(correct) / total
 
 
-def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kwargs):
+def train(model, dataloaders, epochs=1, gpu_id=0, verbose=True, **kwargs):
     if not kwargs.get('period_length', 0):
         kwargs['period_length'] = epochs
     
@@ -128,31 +142,39 @@ def train(model, trainloader, testloader, epochs=1, gpu_id=0, verbose=True, **kw
     lr_scheduler = LRSchedule.sgdr(**kwargs)
     opt = torch.optim.SGD(model.parameters(), lr=lr_scheduler(0), momentum=0.9, weight_decay=5e-4)
     
-    train_accs, test_accs = [], []
+    performance = []
     for epoch in range(0, epochs):
         print('epoch=%d' % epoch, file=sys.stderr)
         
-        train_acc = train_epoch(model, opt, lr_scheduler, epoch, trainloader, gpu_id=gpu_id, verbose=verbose)
-        test_acc = test_epoch(model, testloader, gpu_id=gpu_id, verbose=verbose)
+        train_acc = train_epoch(model, opt, lr_scheduler, epoch, dataloaders['train'], gpu_id=gpu_id, verbose=verbose)
+        test_acc = eval_epoch(model, dataloaders['test'], gpu_id=gpu_id, verbose=verbose)
+        if dataloaders['val']:
+            val_acc = eval_epoch(model, dataloaders['val'], gpu_id=gpu_id, verbose=verbose)
+        else:
+            val_acc = None
         
-        train_accs.append(train_acc)
-        test_accs.append(test_acc)
+        performance.append({
+            "train" : train_acc,
+            "test" : test_acc,
+            "val" : val_acc,
+        })
     
-    return model.cpu(), {"train_accs" : train_accs, "test_accs" : test_accs}
+    return model.cpu(), performance
 
 
 # --
 # Run
 
-def _mp_train_worker(run_name, step_id, models, model_ids, results, **kwargs):
-    trainloader, testloader = make_dataloaders()
+def _mp_train_worker(run_name, step_id, models, model_ids, results, train_size, **kwargs):
+    dataloaders = make_dataloaders(train_size)
+    
     for model_id in model_ids:
-        t = time()
+        start_time = time()
         
         # --
         # Training
         
-        model, performance = train(models[model_id], trainloader, testloader, **kwargs)
+        model, performance = train(models[model_id], dataloaders, **kwargs)
         
         # --
         # Logging
@@ -160,56 +182,43 @@ def _mp_train_worker(run_name, step_id, models, model_ids, results, **kwargs):
         model_name = model.get_id() + datetime.now().strftime('-%Y%m%d_%H%M%S')
         model_path = os.path.join('results/models', model_name)
         log_path = os.path.join('results/logs', run_name, model_name)
-        torch.save(model.state_dict(), model_path)
-        timestamp = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-        results[model_id] = {
-            "timestamp"   : str(timestamp),
+        
+        tmp_results = {
+            "timestamp"   : datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
             "run_name"    : str(run_name),
             "step_id"     : int(step_id),
             "model_id"    : str(model_id),
-            "model_path"  : str(model_path),
-            "log_path"    : str(log_path),
+            "time"        : time() - start_time,
+            "gpu_id"      : kwargs['gpu_id'],
             
             "performance" : performance,
             
-            "model"       : None,
+            "model_path"  : str(model_path),
+            "log_path"    : str(log_path),
         }
         
-        json.dump(results[model_id], open(log_path, 'w'))
-        model.save(model_path)
+        json.dump(tmp_results, open(log_path, 'w'))
+        model.save(model_path); del model
         
-        print({
-            "run_name"          : run_name,
-            "model_id"          : model_id,
-            "time"              : time() - t,
-            "performance_train" : performance['train_accs'][-1],
-            # "performance_val"   : performance['val_accs'][-1],
-            "performance_test"  : performance['test_accs'][-1],
-            "gpu_id"            : kwargs['gpu_id'],
-            "timestamp"         : timestamp,
-        }, file=sys.stderr)
-        
-        del model
+        print(tmp_results, file=sys.stderr)
+        results[model_id] = tmp_results
 
 
 
-def train_mp(run_name, step_id, models, num_gpus=2, **kwargs):
+def train_mp(models, num_gpus=2, **kwargs):
     
     manager = mp.Manager()
     results = manager.dict()
     
-    chunks = np.array_split(list(models.keys()), num_gpus)
-    
     processes = []
-    for gpu_id, chunk in enumerate(chunks):
+    for gpu_id, model_ids in enumerate(np.array_split(list(models.keys()), num_gpus)):
         kwargs.update({
-            "run_name"  : run_name,
-            "step_id"   : step_id,
             "models"    : models,
-            "model_ids" : chunk,
+            "model_ids" : model_ids,
             "gpu_id"    : gpu_id,
             "results"   : results,
         })
+        
         p = mp.Process(target=_mp_train_worker, kwargs=kwargs)
         p.start()
         processes.append(p)
