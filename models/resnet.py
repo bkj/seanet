@@ -5,70 +5,94 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-def conv3x3(in_planes, out_planes, stride=1):
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
+import sys
+sys.path.append('..')
+import morph_layers as mm
+from seanet import SeaNet
+
+def make_seablock(in_planes, planes, stride=1, input_dim=32):
+    if stride == 1:
+        return SeaNet({
+            1: (mm.MorphBatchNorm2d(in_planes, relu=True), 0),
+            2: (mm.MorphConv2d(in_planes, planes, kernel_size=3, padding=1, stride=1, bias=False), 1),
+            3: (mm.MorphBatchNorm2d(planes, relu=True), 2),
+            4: (mm.MorphConv2d(planes, planes, kernel_size=3, padding=1, stride=1, bias=False), 3),
+            5: (mm.AddLayer(alpha=0.5), [4, 0])
+        }, input_shape=(in_planes, input_dim, input_dim))
+    else:
+        return SeaNet({
+            1: (mm.MorphBatchNorm2d(in_planes, relu=True), 0),
+            2: (mm.MorphConv2d(in_planes, planes, kernel_size=3, padding=1, stride=stride, bias=False), 1),
+            3: (mm.MorphBatchNorm2d(planes, relu=True), 2),
+            4: (mm.MorphConv2d(planes, planes, kernel_size=3, padding=1, stride=1, bias=False), 3),
+            
+            5: (mm.MorphConv2d(in_planes, planes, kernel_size=1, stride=stride, bias=False), 1), # shortcut
+            6: (mm.AddLayer(alpha=0.5), [4, 5]),
+        }, input_shape=(in_planes, input_dim, input_dim))
 
 
-class PreActBlock(nn.Module):
-    def __init__(self, in_planes, planes, stride=1):
-        super(PreActBlock, self).__init__()
-        self.bn1 = nn.BatchNorm2d(in_planes)
-        self.conv1 = conv3x3(in_planes, planes, stride)
-        self.bn2 = nn.BatchNorm2d(planes)
-        self.conv2 = conv3x3(planes, planes)
+class SeaResNet(nn.Module):
+    def __init__(self, num_blocks=[2, 2, 2, 2], num_classes=10, input_shape=(3, 32, 32)):
+        super(SeaResNet, self).__init__()
         
-        if stride != 1 or in_planes != planes:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_planes, planes, kernel_size=1, stride=stride, bias=False)
-            )
-    
-    def forward(self, x):
-        out = F.relu(self.bn1(x))
-        shortcut = self.shortcut(out) if hasattr(self, 'shortcut') else x
-        out = self.conv1(out)
-        out = self.conv2(F.relu(self.bn2(out)))
-        out += shortcut
-        return out
-
-
-class ResNet(nn.Module):
-    def __init__(self, block=PreActBlock, num_blocks=[2, 2, 2, 2], num_classes=10):
-        super(ResNet, self).__init__()
-        self.in_planes = 64
-        
-        self.conv1 = conv3x3(3, 64)
+        self.conv1 = nn.Conv2d(input_shape[0], 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
+        
+        self.in_planes = 64
+        self.input_dim = input_shape[-1]
         self.core_layers = nn.Sequential(*[
-            self._make_layer(block, 64, num_blocks[0], stride=1),
-            self._make_layer(block, 128, num_blocks[1], stride=2),
-            self._make_layer(block, 256, num_blocks[2], stride=2),
-            self._make_layer(block, 512, num_blocks[3], stride=2),
+            self._make_layer(64, num_blocks[0], stride=1),
+            self._make_layer(128, num_blocks[1], stride=2),
+            self._make_layer(256, num_blocks[2], stride=2),
+            self._make_layer(512, num_blocks[3], stride=2),
         ])
+        
         self.linear = nn.Linear(512, num_classes)
         
-    def _make_layer(self, block, planes, num_blocks, stride):
+        self._input_shape = input_shape
+        self._input_data  = Variable(torch.randn((10,) + self._input_shape))
+    
+    def _make_layer(self, planes, num_blocks, stride):
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for stride in strides:
-            layers.append(block(self.in_planes, planes, stride))
-            self.in_planes = planes
+            seablock = make_seablock(in_planes=self.in_planes, planes=planes, stride=stride, input_dim=self.input_dim)
+            layers.append(seablock)
+            
+            curr_shape = seablock.forward().shape
+            self.input_dim = curr_shape[-1]
+            self.in_planes = curr_shape[1]
         
         return nn.Sequential(*layers)
         
-    def forward(self, x):
+    def forward(self, x=None):
+        if x is None:
+            x = self._input_data
+        
         out = F.relu(self.bn1(self.conv1(x)))
         
         out = self.core_layers(out)
-        
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
         return self.linear(out)
 
-def test():
-    net = ResNet18()
-    y = net(Variable(torch.randn(1,3,32,32)))
-    print(y.size())
 
-if __name__ == "__main__":
-    test()
+# def test():
+#     net = ResNet()
+#     y = net(Variable(torch.randn(1,3,32,32)))
+#     print(y.size())
+
+# if __name__ == "__main__":
+#     test()
+
+net = SeaResNet()
+
+net.forward()
+
+
+
+
+
+
+
 

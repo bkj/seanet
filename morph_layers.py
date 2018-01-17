@@ -10,6 +10,7 @@ import sys
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 from torch.autograd import Variable
 
 from helpers import colstring
@@ -37,9 +38,10 @@ class FlatLinear(nn.Linear):
 
 
 class AddLayer(nn.Module):
-    def __init__(self):
+    def __init__(self, alpha=1.0):
         super(AddLayer, self).__init__()
-        self.alpha = nn.Parameter(torch.Tensor([1.0]))
+        self.orig_alpha = alpha
+        self.alpha = nn.Parameter(torch.Tensor([alpha]))
     
     def forward(self, x):
         return self.alpha * x[0] + (1 - self.alpha) * x[1]
@@ -48,7 +50,7 @@ class AddLayer(nn.Module):
         return self.__class__.__name__ + ' + ' + str(self.alpha.data[0])
     
     def reset_parameters(self):
-        self.alpha.data.zero_() + 1
+        self.alpha.data.zero_() + self.orig_alpha
 
 
 class CatLayer(nn.Module):
@@ -137,9 +139,10 @@ class MorphBatchNorm2d(MorphMixin, nn.BatchNorm2d):
         !! Does this matter?  Not sure...
     """
     
-    def __init__(self, *args, **kwargs):
-        super(MorphBatchNorm2d, self).__init__(*args, **kwargs)
+    def __init__(self, num_features, relu=False, **kwargs):
+        super(MorphBatchNorm2d, self).__init__(num_features=num_features, **kwargs)
         self.eps = 0
+        self.relu = relu
     
     def morph_in(self, x):
         new_channels = x.size(1)
@@ -173,6 +176,16 @@ class MorphBatchNorm2d(MorphMixin, nn.BatchNorm2d):
             self.bias.data.zero_()
             self.weight.data.zero_()
             self.weight.data += 1
+    
+    def forward(self, x):
+        out = super(MorphBatchNorm2d, self).forward(x)
+        if self.relu:
+            return F.relu(out)
+        
+        return out
+    
+    def __repr__(self):
+        return super(MorphBatchNorm2d, self).__repr__()[:-1] + ', relu=%d)' % self.relu
 
 
 class MorphBCRLayer(MorphMixin, nn.Sequential):

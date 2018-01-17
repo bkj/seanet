@@ -22,7 +22,7 @@ from lr import LRSchedule
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--inpath', type=str)
-    parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--epochs', type=int, default=100)
     return parser.parse_args()
 
 

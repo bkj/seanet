@@ -6,10 +6,10 @@
 
 from __future__ import print_function
 
-import _pickle as cPickle
 import numpy as np
 from dask import get
 from hashlib import md5
+import _pickle as cPickle
 from pprint import pprint
 from toposort import toposort
 from dask.dot import dot_graph
@@ -53,6 +53,9 @@ class SeaNet(nn.Module):
         
         # Register parameters
         for k,(layer, inputs) in self.graph.items():
+            if isinstance(inputs, tuple):
+                raise Exception('!! inputs must be a list, not a tuple')
+            
             if isinstance(layer, nn.Module):
                 self.add_module(str(k), layer)
         
