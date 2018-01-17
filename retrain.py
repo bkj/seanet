@@ -1,4 +1,8 @@
+#!/usr/bin/env python
 
+"""
+    retrain.py
+"""
 
 
 from __future__ import print_function, division
@@ -13,26 +17,35 @@ from time import time
 from seanet import SeaNet
 from trainer import make_dataloaders, train
 from lr import LRSchedule
-# --
-# Helpers
 
 
-def reset_parameters(layer):
-    try:
-        _ = layer.reset_parameters()
-    except:
-        try:
-            for child in layer.children():
-                reset_parameters(child)
-        except:
-            print(layer)
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--inpath', type=str)
+    parser.add_argument('--epochs', type=int, default=50)
+    return parser.parse_args()
 
 
 # --
 # Run
 
-model_path = 'results/models/f410fc9dd28df54712b0f32f5e0330bf-lEJmmzbY-20180110_180900'
-model = SeaNet.load(model_path)
-
-dataloaders = make_dataloaders(train_size=1.0)
-model, performance = train(model, dataloaders, epochs=50, gpu_id=1, verbose=True)
+if __name__ == "__main__":
+    
+    args = parse_args()
+    
+    model = SeaNet.load(args.inpath)
+    
+    # Reset parameters
+    # Make sure errors here are expected
+    for child in model.children():
+        try:
+            child.reset_parameters()
+        except:
+            print("Cannot reset: %s" % str(child))
+    
+    dataloaders = make_dataloaders(train_size=1.0)
+    
+    model, performance = train(model, dataloaders, epochs=args.epochs, gpu_id=1, verbose=True)
+    
+    model.save('./retrained')
+    json.dump(performance, open('./retrained-performance.json', 'w'))

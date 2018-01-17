@@ -14,13 +14,12 @@ pd.set_option('display.width', 150)
 from rsub import *
 from matplotlib import pyplot as plt
 
-x = list(map(lambda x: json.load(open(x)), glob('results/logs/val-0.8-v3/*')))
+x = list(map(lambda x: json.load(open(x)), glob('results/logs/run-n12-m2-s20/*')))
 
 y = []
-for i, xx in enumerate(x):
+for xx in x:
     for epoch, x in enumerate(xx['performance']):
         x.update({
-            "id" : i,
             "epoch" : epoch,
             "step_id" : xx['step_id'],
             "model_id" : xx['model_id'],
@@ -30,21 +29,18 @@ for i, xx in enumerate(x):
         
         y.append(x)
 
-df = pd.DataFrame(y).sort_values('epoch').reset_index(drop=True)
-
-len(set(df.model_path[df.train < 0.2]))
-len(set(df.model_path))
+df = pd.DataFrame(y).sort_values(['step_id', 'model_id', 'epoch']).reset_index(drop=True)
+df = df[['model_path', 'timestamp', 'step_id', 'model_id', 'epoch', 'train', 'val', 'test']]
 
 df = df[df.test > 0.2].reset_index(drop=True)
 df['uid'] = df.step_id.astype(str) + '-' + df.model_id.astype(str)
 
-
 for uid in df.uid.unique():
     sub = df[df.uid == uid]
     
-    s = np.arange(sub.shape[0])
-    p = np.array(sub.val)
+    s = sub.step_id * sub.epoch.max() + np.arange(sub.shape[0])
+    p = np.array(sub.test)
     _ = plt.plot(s, p, alpha=0.25)
 
-_ = plt.ylim(0.8, 0.95)
+_ = plt.ylim(0.7, 1.0)
 show_plot()

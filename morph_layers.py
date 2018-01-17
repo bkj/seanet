@@ -10,10 +10,12 @@ import sys
 
 import torch
 from torch import nn
-from torch.nn import MaxPool2d
 from torch.autograd import Variable
 
 from helpers import colstring
+
+# --
+# Helpers
 
 class DummyDataLayer(nn.Module):
     def __init__(self, shape):
@@ -44,6 +46,9 @@ class AddLayer(nn.Module):
     
     def __repr__(self):
         return self.__class__.__name__ + ' + ' + str(self.alpha.data[0])
+    
+    def reset_parameters(self):
+        self.alpha.data.zero_() + 1
 
 
 class CatLayer(nn.Module):
@@ -56,6 +61,9 @@ class CatLayer(nn.Module):
     
     def __repr__(self):
         return self.__class__.__name__ + ' || '
+    
+    def reset_parameters(self):
+        pass
 
 # --
 # Morphable layers
@@ -213,3 +221,7 @@ class MorphBCRLayer(MorphMixin, nn.Sequential):
             s += ', bias=False'
         s += ')'
         return s.format(name=self.__class__.__name__, **self.conv.__dict__)
+    
+    def reset_parameters(self):
+        self.conv.reset_parameters()
+        self.bn.reset_parameters()
