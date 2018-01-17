@@ -135,15 +135,12 @@ def eval_epoch(model, dataloader, gpu_id=0, verbose=True):
 
 
 def train(model, dataloaders, epochs=1, gpu_id=0, verbose=True, **kwargs):
-    if not kwargs.get('period_length', 0):
-        kwargs['period_length'] = epochs
-    
     model = model.cuda(gpu_id)
-    lr_scheduler = LRSchedule.sgdr(**kwargs)
+    lr_scheduler = LRSchedule.sgdr(period_length=epochs, **kwargs)
     opt = torch.optim.SGD(model.parameters(), lr=lr_scheduler(0), momentum=0.9, weight_decay=5e-4)
     
     performance = []
-    for epoch in range(0, epochs):
+    for epoch in range(epochs):
         print('epoch=%d' % epoch, file=sys.stderr)
         
         train_acc = train_epoch(model, opt, lr_scheduler, epoch, dataloaders['train'], gpu_id=gpu_id, verbose=verbose)
@@ -158,6 +155,12 @@ def train(model, dataloaders, epochs=1, gpu_id=0, verbose=True, **kwargs):
             "test" : test_acc,
             "val" : val_acc,
         })
+        
+        if train_acc < 0.2:
+            print('*' * 50 + 'VV break vv ' + '*' * 50, file=sys.stderr)
+            print(model, file=sys.stderr)
+            print('*' * 50 + '^^ break ^^' + '*' * 50, file=sys.stderr)
+            break
     
     return model.cpu(), performance
 
@@ -180,10 +183,10 @@ def _mp_train_worker(run_name, step_id, models, model_ids, results, train_size, 
         # Logging
         
         model_name = model.get_id() + datetime.now().strftime('-%Y%m%d_%H%M%S')
-        model_path = os.path.join('results/models', model_name)
-        log_path = os.path.join('results/logs', run_name, model_name)
+        model_path = os.path.join('results', run_name, 'models', run_name, model_name)
+        log_path = os.path.join('results', run_name, 'logs', run_name, model_name)
         
-        tmp_results = {
+        results[model_id] = {
             "timestamp"   : datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
             "run_name"    : str(run_name),
             "step_id"     : int(step_id),
@@ -196,12 +199,11 @@ def _mp_train_worker(run_name, step_id, models, model_ids, results, train_size, 
             "model_path"  : str(model_path),
             "log_path"    : str(log_path),
         }
+        print(results[model_id], file=sys.stderr)
         
-        json.dump(tmp_results, open(log_path, 'w'))
-        model.save(model_path); del model
-        
-        print(tmp_results, file=sys.stderr)
-        results[model_id] = tmp_results
+        json.dump(results[model_id], open(log_path, 'w'))
+        model.save(model_path)
+        del model
 
 
 

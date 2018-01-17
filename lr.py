@@ -6,8 +6,9 @@
     learning rate scheduler
 """
 
-from __future__ import division
+from __future__ import print_function, division
 
+import sys
 import numpy as np
 
 # --
@@ -69,6 +70,7 @@ class LRSchedule(object):
     
     @staticmethod
     def sgdr(period_length=50, lr_init=0.05, lr_min=0, t_mult=1, **kwargs):
+        print('sgdr: period_length=%d | lr_init=%f' % (period_length, lr_init), file=sys.stderr)
         def f(progress):
             """ Cosine learning rate annealing """
             if t_mult > 1:

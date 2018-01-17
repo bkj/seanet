@@ -27,7 +27,6 @@ def parse_args():
     parser.add_argument('--run-name', type=str, default='val-split-0')
     
     parser.add_argument('--epochs', type=int, default=20)
-    parser.add_argument('--lr-init', type=float, default=0.05)
     
     parser.add_argument('--num-neighbors', type=int, default=8)
     parser.add_argument('--num-morphs', type=int, default=5)
@@ -88,7 +87,7 @@ for step in range(args.num_steps):
         except:
             pass
         
-        print(('-'* 100) + " neib=" + str(len(neibs)), file=sys.stderr)
+        print(('-'* 100) + " neib=" + str(len(neibs) - 1), file=sys.stderr)
     
     # Train (in parallel)
     all_models[step] = train_mp(
@@ -99,7 +98,7 @@ for step in range(args.num_steps):
         epochs=args.num_epoch_neighbors,
         verbose=False,
     )
-    best_id = np.argmax([o['performance'][-1]['test'] for k,o in all_models[step].items()])
+    best_id = np.argmax([o['performance'][-1]['val'] for k,o in all_models[step].items()])
     best_model = copy.deepcopy(all_models[step][best_id]['model'])
     print('best_model:', file=sys.stderr)
     print(best_model, file=sys.stderr)
