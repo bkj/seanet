@@ -1,11 +1,16 @@
 #!/usr/bin/env python
 
+"""
+    searesnet.py
+"""
+
+import sys
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-import sys
 sys.path.append('..')
 import morph_layers as mm
 from seanet import SeaNet
@@ -13,22 +18,21 @@ from seanet import SeaNet
 def make_seablock(in_planes, planes, stride=1, input_dim=32):
     if stride == 1:
         return SeaNet({
-            1: (mm.MorphBatchNorm2d(in_planes, relu=True), 0),
+            1: (mm.MorphBatchNorm2d(in_planes, relu=True, eps=1e-5), 0),
             2: (mm.MorphConv2d(in_planes, planes, kernel_size=3, padding=1, stride=1, bias=False), 1),
-            3: (mm.MorphBatchNorm2d(planes, relu=True), 2),
+            3: (mm.MorphBatchNorm2d(planes, relu=True, eps=1e-5), 2),
             4: (mm.MorphConv2d(planes, planes, kernel_size=3, padding=1, stride=1, bias=False), 3),
             5: (mm.AddLayer(alpha=0.5), [4, 0])
-        }, input_shape=(in_planes, input_dim, input_dim))
+        }, input_shape=(in_planes, input_dim, input_dim), tags='s1')
     else:
         return SeaNet({
-            1: (mm.MorphBatchNorm2d(in_planes, relu=True), 0),
+            1: (mm.MorphBatchNorm2d(in_planes, relu=True, eps=1e-5), 0),
             2: (mm.MorphConv2d(in_planes, planes, kernel_size=3, padding=1, stride=stride, bias=False), 1),
-            3: (mm.MorphBatchNorm2d(planes, relu=True), 2),
+            3: (mm.MorphBatchNorm2d(planes, relu=True, eps=1e-5), 2),
             4: (mm.MorphConv2d(planes, planes, kernel_size=3, padding=1, stride=1, bias=False), 3),
-            
             5: (mm.MorphConv2d(in_planes, planes, kernel_size=1, stride=stride, bias=False), 1), # shortcut
             6: (mm.AddLayer(alpha=0.5), [4, 5]),
-        }, input_shape=(in_planes, input_dim, input_dim))
+        }, input_shape=(in_planes, input_dim, input_dim), tags='s2')
 
 
 class SeaResNet(nn.Module):
@@ -75,24 +79,4 @@ class SeaResNet(nn.Module):
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
         return self.linear(out)
-
-
-# def test():
-#     net = ResNet()
-#     y = net(Variable(torch.randn(1,3,32,32)))
-#     print(y.size())
-
-# if __name__ == "__main__":
-#     test()
-
-net = SeaResNet()
-
-net.forward()
-
-
-
-
-
-
-
 

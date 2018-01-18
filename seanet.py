@@ -41,7 +41,7 @@ def short_uuid(n=8):
 # SeaNet
 
 class SeaNet(nn.Module):
-    def __init__(self, graph, input_shape=(1, 28, 28), input_data=None):
+    def __init__(self, graph, input_shape=(1, 28, 28), input_data=None, tags=None):
         assert 0 not in graph.keys(), "SeaNet: 0 in graph.keys() -- 0 is reserved for data"
         
         super(SeaNet, self).__init__()
@@ -65,6 +65,8 @@ class SeaNet(nn.Module):
         else:
             self._input_shape = input_data.shape[1:]
             self._input_data  = input_data
+        
+        self.tags = tags
     
     def forward(self, x=None, layer=None):
         if layer is None:

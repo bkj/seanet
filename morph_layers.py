@@ -139,9 +139,8 @@ class MorphBatchNorm2d(MorphMixin, nn.BatchNorm2d):
         !! Does this matter?  Not sure...
     """
     
-    def __init__(self, num_features, relu=False, **kwargs):
+    def __init__(self, num_features, relu=False, eps=0, **kwargs):
         super(MorphBatchNorm2d, self).__init__(num_features=num_features, **kwargs)
-        self.eps = 0
         self.relu = relu
     
     def morph_in(self, x):
