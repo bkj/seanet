@@ -15,24 +15,44 @@ sys.path.append('..')
 import morph_layers as mm
 from seanet import SeaNet
 
+EPS = 0
 def make_seablock(in_planes, planes, stride=1, input_dim=32):
     if stride == 1:
         return SeaNet({
-            1: (mm.MorphBatchNorm2d(in_planes, relu=True, eps=1e-5), 0),
+            1: (mm.MorphBatchNorm2d(in_planes, relu=True, eps=EPS), 0),
             2: (mm.MorphConv2d(in_planes, planes, kernel_size=3, padding=1, stride=1, bias=False), 1),
-            3: (mm.MorphBatchNorm2d(planes, relu=True, eps=1e-5), 2),
+            3: (mm.MorphBatchNorm2d(planes, relu=True, eps=EPS), 2),
             4: (mm.MorphConv2d(planes, planes, kernel_size=3, padding=1, stride=1, bias=False), 3),
             5: (mm.AddLayer(alpha=0.5), [4, 0])
-        }, input_shape=(in_planes, input_dim, input_dim), tags='s1')
+        }, input_shape=(in_planes, input_dim, input_dim), tags='simple')
     else:
         return SeaNet({
-            1: (mm.MorphBatchNorm2d(in_planes, relu=True, eps=1e-5), 0),
+            1: (mm.MorphBatchNorm2d(in_planes, relu=True, eps=EPS), 0),
             2: (mm.MorphConv2d(in_planes, planes, kernel_size=3, padding=1, stride=stride, bias=False), 1),
-            3: (mm.MorphBatchNorm2d(planes, relu=True, eps=1e-5), 2),
+            3: (mm.MorphBatchNorm2d(planes, relu=True, eps=EPS), 2),
             4: (mm.MorphConv2d(planes, planes, kernel_size=3, padding=1, stride=1, bias=False), 3),
             5: (mm.MorphConv2d(in_planes, planes, kernel_size=1, stride=stride, bias=False), 1), # shortcut
-            6: (mm.AddLayer(alpha=0.5), [4, 5]),
-        }, input_shape=(in_planes, input_dim, input_dim), tags='s2')
+            6: (mm.AddLayer(alpha=0.5), [5, 4]),
+        }, input_shape=(in_planes, input_dim, input_dim), tags='downsample')
+
+
+def make_simple_seablock(in_planes, planes, stride=1, input_dim=32):
+    if stride == 1:
+        # simple
+        return SeaNet({
+            1: (mm.MorphConv2d(in_planes, planes, kernel_size=3, padding=1, stride=1, bias=False), 0),
+            2: (mm.AddLayer(alpha=0.5), [1, 0]),
+            3: (mm.IdentityLayer(), 2), # To allow layers to be added at the end
+        }, input_shape=(in_planes, input_dim, input_dim), tags='simple')
+    else:
+        # downsample
+        return SeaNet({
+            1: (mm.MorphConv2d(in_planes, planes, kernel_size=3, padding=1, stride=stride, bias=False), 0),
+            2: (mm.MorphConv2d(in_planes, planes, kernel_size=1, stride=stride, bias=False), 0),
+            3: (mm.AddLayer(alpha=0.5), [2, 1]),
+            4: (mm.IdentityLayer(), 3), # To allow layers to be added at the end
+        }, input_shape=(in_planes, input_dim, input_dim), tags='downsample')
+
 
 
 class SeaResNet(nn.Module):
@@ -60,7 +80,8 @@ class SeaResNet(nn.Module):
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for stride in strides:
-            seablock = make_seablock(in_planes=self.in_planes, planes=planes, stride=stride, input_dim=self.input_dim)
+            # seablock = make_seablock(in_planes=self.in_planes, planes=planes, stride=stride, input_dim=self.input_dim)
+            seablock = make_simple_seablock(in_planes=self.in_planes, planes=planes, stride=stride, input_dim=self.input_dim)
             layers.append(seablock)
             
             curr_shape = seablock.forward().shape

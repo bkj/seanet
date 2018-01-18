@@ -65,7 +65,7 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
         l1_size = model(layer=idx1).size()
         l2_size = model(layer=idx2).size()
         
-        merge_node = model.add_skip(idx1, idx2, AddLayer())
+        merge_node = model.add_skip(idx1, idx2, mm.AddLayer())
         
         if _need_fix_channels:
             new_layer = mm.MorphBCRLayer(l1_size[1], l2_size[1], kernel_size=3, padding=1)
@@ -107,16 +107,16 @@ def do_cat_skip(model, idx=None, fix_spatial=True):
         l2_size = model(layer=idx2).size()
         
         # Add skip
-        merge_node = model.add_skip(idx1, idx2, CatLayer())
+        merge_node = model.add_skip(idx1, idx2, mm.CatLayer())
         
         # If different spatial extent, add max pooling
         if l1_size[-1] != l2_size[-1]:
             if l1_size[-1] > l2_size[-1]:
                 scale = int(l1_size[-1] / l2_size[-1])
-                maxpool_node = model.modify_edge(idx1, merge_node, nn.MaxPool2d(scale))
+                maxpool_node = model.modify_edge(idx1, merge_node, mm.MaxPool2d(scale))
             else:
                 scale = int(l2_size[-1] / l1_size[-1])
-                maxpool_node = model.modify_edge(idx2, merge_node, nn.MaxPool2d(scale))
+                maxpool_node = model.modify_edge(idx2, merge_node, mm.MaxPool2d(scale))
         
         # 1x1 conv to fix output dim
         out_size = model(layer=merge_node).size()
@@ -196,7 +196,6 @@ def do_make_deeper(model, idx=None):
     
     return f
 
-# >>
 
 def do_flat_insert(model, idx=None):
     if idx is None:
@@ -228,8 +227,6 @@ def do_flat_insert(model, idx=None):
     return f
 
 
-# <<
-
 def _do_random_morph(model, morph_factories, assert_eye=True, max_attempts=10):
     new_model = copy.deepcopy(model)
     
@@ -249,7 +246,7 @@ def _do_random_morph(model, morph_factories, assert_eye=True, max_attempts=10):
     # --
     # Apply morph
     
-    new_model = morph(new_model)
+    new_model = morph(new_model).eval()
     
     # --
     # Check idempotence
@@ -275,10 +272,10 @@ def do_random_morph(model, n=1, assert_eye=True):
         model = _do_random_morph(
             model=model,
             morph_factories=[
-                do_add_skip,
-                do_cat_skip,
-                do_make_deeper,
-                do_make_wider,
+                # do_add_skip,
+                # do_cat_skip,
+                # do_make_deeper,
+                # do_make_wider,
                 do_flat_insert,
             ],
             assert_eye=assert_eye,

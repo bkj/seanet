@@ -22,6 +22,7 @@ from torch.nn import MaxPool2d, ReLU
 # Helpers
 
 class DummyDataLayer(nn.Module):
+    """ hold data in SeaNet's dask specification """
     def __init__(self, shape):
         super(DummyDataLayer, self).__init__()
         self.shape = shape
@@ -40,7 +41,27 @@ class FlatLinear(nn.Linear):
         return super(FlatLinear, self).forward(x)
 
 
+class IdentityLayer(nn.Module):
+    """ used to add stub edges at ends of blocks """
+    def forward(self, x):
+        return x
+
+
+class ShapeChecker(nn.Module):
+    """ used to enforce shapes between boundaries of blocks """
+    
+    def __init__(self, shape):
+        self.shape = shape
+    
+    def forward(self, x):
+        for s, x in zip(self.shape, x.shape):
+            if self.shape is not None:
+                if s != x:
+                    raise Exception('!! ShapeChecker failed')
+
+
 class AddLayer(nn.Module):
+    """ weighted sum of two branches """
     def __init__(self, alpha=1.0):
         super(AddLayer, self).__init__()
         self.orig_alpha = alpha
@@ -56,7 +77,15 @@ class AddLayer(nn.Module):
         self.alpha.data.zero_() + self.orig_alpha
 
 
+# !! May want to reparameterize AddLayer -- right now, alpha can go below zero
+# or above 1, which is weird.
+# 
+# Likely, we should change this to self.alpha / (1 + self.alpha)
+
+
+
 class CatLayer(nn.Module):
+    """ concatenate two branches """
     def __init__(self, dim=1):
         super(CatLayer, self).__init__()
         self.dim = dim
