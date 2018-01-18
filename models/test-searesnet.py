@@ -35,7 +35,7 @@ from searesnet import SeaResNet
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--net', type=str, default='searesnet')
-    parser.add_argument('--epochs', type=int, default=300)
+    parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--lr-schedule', type=str, default='linear')
     parser.add_argument('--lr-init', type=float, default=0.1)
     

@@ -15,6 +15,9 @@ from torch.autograd import Variable
 
 from helpers import colstring
 
+
+from torch.nn import MaxPool2d, ReLU
+
 # --
 # Helpers
 
@@ -130,6 +133,7 @@ class MorphConv2d(MorphMixin, nn.Conv2d):
         self.weight.data = torch.zeros((self.out_channels, self.in_channels) + self.kernel_size)
         mid = int((self.kernel_size[0] - 1) / 2)
         self.weight.data[:, :self.out_channels, mid, mid] = torch.eye(self.out_channels).view(-1)
+        return self
 
 
 class MorphBatchNorm2d(MorphMixin, nn.BatchNorm2d):
@@ -140,7 +144,7 @@ class MorphBatchNorm2d(MorphMixin, nn.BatchNorm2d):
     """
     
     def __init__(self, num_features, relu=False, eps=0, **kwargs):
-        super(MorphBatchNorm2d, self).__init__(num_features=num_features, **kwargs)
+        super(MorphBatchNorm2d, self).__init__(num_features=num_features, eps=eps, **kwargs)
         self.relu = relu
     
     def morph_in(self, x):
@@ -175,6 +179,8 @@ class MorphBatchNorm2d(MorphMixin, nn.BatchNorm2d):
             self.bias.data.zero_()
             self.weight.data.zero_()
             self.weight.data += 1
+        
+        return self
     
     def forward(self, x):
         out = super(MorphBatchNorm2d, self).forward(x)
@@ -217,6 +223,7 @@ class MorphBCRLayer(MorphMixin, nn.Sequential):
     def to_eye(self):
         self.conv.to_eye()
         self.bn.to_eye()
+        return self
     
     def __repr__(self):
         s = ('{name} ({in_channels}, {out_channels}, kernel_size={kernel_size}'

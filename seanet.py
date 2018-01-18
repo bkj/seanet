@@ -141,6 +141,9 @@ class SeaNet(nn.Module):
     # --
     # Sample from computational graph
     
+    def get_node(self, idx):
+        return self.graph[idx][0]
+    
     def get_edgelist(self):
         for k, (_, inputs) in self.graph.items():
             if isinstance(inputs, list):
