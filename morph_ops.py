@@ -166,6 +166,7 @@ def do_make_wider(model, idx=None, k=2):
     
     return f
 
+
 def do_make_deeper(model, idx=None):
     if idx is None:
         idx2, idx1 = model.random_edge()
@@ -198,6 +199,8 @@ def do_make_deeper(model, idx=None):
 
 
 def do_flat_insert(model, idx=None):
+    # !! Can't be inserting ReLUs willy-nilly
+    
     if idx is None:
         idx2, idx1 = model.random_edge()
     else:
@@ -227,26 +230,39 @@ def do_flat_insert(model, idx=None):
     return f
 
 
-def _do_random_morph(model, morph_factories, assert_eye=True, max_attempts=10):
-    new_model = copy.deepcopy(model)
+def _do_random_morph(model, morph_factories, assert_eye=True, attempts=10, block=False):
+    if not block:
+        block = model
+    else:
+        block_name = np.random.choice(list(model._sea_blocks.keys()))
+        block = model._sea_blocks[block_name][0]
     
     # --
     # Sample valid morph
     
+    new_block = copy.deepcopy(block)
+    
     morph_factory = np.random.choice(morph_factories)
-    morph = morph_factory(new_model)
-    counter = 0
-    while morph is None:
+    morph_function = morph_factory(new_block)
+    
+    while morph_function is None:
         morph_factory = np.random.choice(morph_factories)
-        morph = morph_factory(new_model)
-        counter += 1
-        if counter > max_attempts:
-            raise Exception('!! _do_random_morph: counter > max_attempts')
+        morph_function = morph_factory(new_block)
+        attempts -= 1
+        if attempts == 0 :
+            raise Exception('!! _do_random_morph: hit max attempts')
     
     # --
     # Apply morph
     
-    new_model = morph(new_model).eval()
+    new_model = copy.deepcopy(model)
+    if not block:
+        new_model = morph_function(new_model)
+    else:
+        for block in new_model._sea_blocks[block_name]:
+            block = morph_function(block)
+    
+    new_model = new_model.eval()
     
     # --
     # Check idempotence
@@ -264,7 +280,7 @@ def _do_random_morph(model, morph_factories, assert_eye=True, max_attempts=10):
     return new_model
 
 
-def do_random_morph(model, n=1, assert_eye=True):
+def do_random_morph(model, n=1, assert_eye=True, block=False):
     model = model.cpu().eval()
     
     for i in range(n):
@@ -272,13 +288,14 @@ def do_random_morph(model, n=1, assert_eye=True):
         model = _do_random_morph(
             model=model,
             morph_factories=[
-                # do_add_skip,
+                do_add_skip,
                 # do_cat_skip,
                 # do_make_deeper,
                 # do_make_wider,
-                do_flat_insert,
+                # do_flat_insert,
             ],
             assert_eye=assert_eye,
+            block=block,
         )
     
     return model
