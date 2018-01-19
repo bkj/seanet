@@ -14,10 +14,11 @@ import argparse
 import numpy as np
 from time import time
 
+sys.path.append('..')
 from seanet import SeaNet
 from trainer import make_dataloaders, train
 from lr import LRSchedule
-
+from helpers import reset_parameters
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -34,14 +35,7 @@ if __name__ == "__main__":
     args = parse_args()
     
     model = SeaNet.load(args.inpath)
-    
-    # Reset parameters
-    # Make sure errors here are expected
-    for child in model.children():
-        try:
-            child.reset_parameters()
-        except:
-            print("Cannot reset: %s" % str(child))
+    model = reset_parameters(model)
     
     dataloaders = make_dataloaders(train_size=1.0)
     

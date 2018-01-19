@@ -213,8 +213,9 @@ class MorphBatchNorm2d(MorphMixin, nn.BatchNorm2d):
     
     def forward(self, x):
         out = super(MorphBatchNorm2d, self).forward(x)
-        if self.relu:
-            return F.relu(out)
+        if hasattr(self, 'relu'):
+            if self.relu:
+                return F.relu(out)
         
         return out
     
