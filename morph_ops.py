@@ -46,16 +46,16 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
     if l1_size != l2_size:
         if l1_size != l2_size:
             if fix_channels:
-                print(colstring.red('do_add_skip: !fix_channels'), file=sys.stderr)
                 _need_fix_channels = True
             else:
+                print(colstring.red('do_add_skip: !fix_channels'), file=sys.stderr)
                 return None
         
         if (l1_size[-1] != l2_size[-1]):
             if fix_spatial:
-                print(colstring.red('do_add_skip: !fix_spatial'), file=sys.stderr)
                 _need_fix_spatial = True
             else:
+                print(colstring.red('do_add_skip: !fix_spatial'), file=sys.stderr)
                 return None
     
     # --
@@ -68,13 +68,13 @@ def do_add_skip(model, idx=None, fix_channels=True, fix_spatial=True):
         merge_node = model.add_skip(idx1, idx2, mm.AddLayer())
         
         if _need_fix_channels:
-            new_layer = mm.MorphBCRLayer(l1_size[1], l2_size[1], kernel_size=3, padding=1)
+            new_layer = mm.MorphConv2d(l1_size[1], l2_size[1], kernel_size=1, padding=0)
             idx1 = model.modify_edge(idx1, merge_node, new_layer)
         
         if _need_fix_spatial:
             scale = int(l1_size[-1] / l2_size[-1])
-            _ = model.modify_edge(idx1, merge_node, nn.MaxPool2d(scale))
-                    
+            _ = model.modify_edge(idx1, merge_node, mm.MaxPool2d(scale))
+        
         model.compile()
         return model
     
@@ -235,6 +235,7 @@ def _do_random_morph(model, morph_factories, assert_eye=True, attempts=10, block
         block = model
     else:
         block_name = np.random.choice(list(model._sea_blocks.keys()))
+        print(colstring.yellow("_do_random_morph: %s" % block_name), file=sys.stderr)
         block = model._sea_blocks[block_name][0]
     
     # --
@@ -284,7 +285,7 @@ def do_random_morph(model, n=1, assert_eye=True, block=False):
     model = model.cpu().eval()
     
     for i in range(n):
-        print('morph=%d' % i)
+        print('-- morph=%d --' % i)
         model = _do_random_morph(
             model=model,
             morph_factories=[

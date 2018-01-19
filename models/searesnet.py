@@ -37,8 +37,7 @@ from seanet import SeaNet
 #         }, input_shape=(in_planes, input_dim, input_dim), tags='downsample')
 
 
-
-def make_simple_seablock(in_planes, planes, stride=1, input_dim=32):
+def make_seablock(in_planes, planes, stride=1, input_dim=32):
     if stride == 1:
         # simple
         return SeaNet({
