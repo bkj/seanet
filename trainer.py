@@ -25,7 +25,7 @@ import torchvision.transforms as transforms
 
 from seanet import SeaNet
 from lr import LRSchedule
-from utils import progress_bar
+from helpers import progress_bar
 import torch.multiprocessing as mp
 
 import warnings
@@ -34,7 +34,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # --
 # IO
 
-def make_dataloaders(train_size, train_batch_size=128, eval_batch_size=256, num_workers=8, seed=123123):
+def make_dataloaders(root='./data', train_size=1.0, train_batch_size=128, eval_batch_size=256, num_workers=8, seed=123123):
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
@@ -47,8 +47,8 @@ def make_dataloaders(train_size, train_batch_size=128, eval_batch_size=256, num_
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
     
-    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=False, transform=transform_train)
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=False, transform=transform_test)
+    trainset = torchvision.datasets.CIFAR10(root=root, train=True, download=False, transform=transform_train)
+    testset = torchvision.datasets.CIFAR10(root=root, train=False, download=False, transform=transform_test)
     
     if train_size < 1:
         train_inds, val_inds = train_test_split(np.arange(len(trainset)), train_size=train_size, random_state=seed)
