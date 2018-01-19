@@ -230,8 +230,8 @@ def do_flat_insert(model, idx=None):
     return f
 
 
-def _do_random_morph(model, morph_factories, assert_eye=True, attempts=10, block=False):
-    if not block:
+def _do_random_morph(model, morph_factories, assert_eye=True, attempts=10, block_model=False):
+    if not block_model:
         block = model
     else:
         block_name = np.random.choice(list(model._sea_blocks.keys()))
@@ -257,7 +257,7 @@ def _do_random_morph(model, morph_factories, assert_eye=True, attempts=10, block
     # Apply morph
     
     new_model = copy.deepcopy(model)
-    if not block:
+    if not block_model:
         new_model = morph_function(new_model)
     else:
         for block in new_model._sea_blocks[block_name]:
@@ -281,7 +281,7 @@ def _do_random_morph(model, morph_factories, assert_eye=True, attempts=10, block
     return new_model
 
 
-def do_random_morph(model, n=1, assert_eye=True, block=False):
+def do_random_morph(model, n=1, assert_eye=True, block_model=False):
     model = model.cpu().eval()
     
     for i in range(n):
@@ -290,13 +290,13 @@ def do_random_morph(model, n=1, assert_eye=True, block=False):
             model=model,
             morph_factories=[
                 do_add_skip,
-                # do_cat_skip,
-                # do_make_deeper,
-                # do_make_wider,
+                do_cat_skip,
+                do_make_deeper,
+                do_make_wider,
                 # do_flat_insert,
             ],
             assert_eye=assert_eye,
-            block=block,
+            block_model=block_model,
         )
     
     return model

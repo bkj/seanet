@@ -106,8 +106,8 @@ def train_epoch(model, opt, lr_scheduler, epoch, dataloader, gpu_id=0, verbose=T
         correct += predicted.eq(targets.data).cpu().sum()
         
         if verbose:
-            progress_bar(batch_idx, batches_per_epoch, 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+            progress_bar(batch_idx, batches_per_epoch, 'Loss: %.3f | Acc: %.3f%%'
+                % (train_loss/(batch_idx+1), 100.*correct/total))
     
     return float(correct) / total
 
@@ -128,8 +128,8 @@ def eval_epoch(model, dataloader, gpu_id=0, verbose=True):
         correct += predicted.eq(targets.data).cpu().sum()
         
         if verbose:
-            progress_bar(batch_idx, batches_per_epoch, 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                % (eval_loss/(batch_idx+1), 100.*correct/total, correct, total))
+            progress_bar(batch_idx, batches_per_epoch, 'Loss: %.3f | Acc: %.3f%%'
+                % (eval_loss/(batch_idx+1), 100.*correct/total))
     
     return float(correct) / total
 
@@ -183,8 +183,8 @@ def _mp_train_worker(run_name, step_id, models, model_ids, results, train_size, 
         # Logging
         
         model_name = model.get_id() + datetime.now().strftime('-%Y%m%d_%H%M%S')
-        model_path = os.path.join('results', run_name, 'models', run_name, model_name)
-        log_path = os.path.join('results', run_name, 'logs', run_name, model_name)
+        model_path = os.path.join('results', run_name, 'models', model_name)
+        log_path = os.path.join('results', run_name, 'logs', model_name)
         
         results[model_id] = {
             "timestamp"   : datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
