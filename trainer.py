@@ -34,7 +34,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # --
 # IO
 
-def make_dataloaders(root='./data', train_size=1.0, train_batch_size=128, eval_batch_size=256, num_workers=8, seed=123123):
+def make_dataloaders(root='data', train_size=1.0, train_batch_size=128, eval_batch_size=256, num_workers=8, seed=123123):
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
@@ -169,7 +169,7 @@ def train(model, dataloaders, epochs=1, gpu_id=0, verbose=True, **kwargs):
 # Run
 
 def _mp_train_worker(run_name, step_id, models, model_ids, results, train_size, **kwargs):
-    dataloaders = make_dataloaders(train_size)
+    dataloaders = make_dataloaders(train_size=train_size)
     
     for model_id in model_ids:
         start_time = time()
