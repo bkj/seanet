@@ -101,7 +101,7 @@ def train_epoch(model, opt, lr_scheduler, epoch, dataloader, gpu_id=0, verbose=T
         opt.step()
         
         train_loss += loss.data[0]
-        _, predicted = torch.max(outputs.data, 1)
+        predicted = torch.max(outputs.data, 1)[1]
         total += targets.size(0)
         correct += predicted.eq(targets.data).cpu().sum()
         
@@ -123,7 +123,7 @@ def eval_epoch(model, dataloader, gpu_id=0, verbose=True):
         loss = F.cross_entropy(outputs, targets)
         
         eval_loss += loss.data[0]
-        _, predicted = torch.max(outputs.data, 1)
+        predicted = torch.max(outputs.data, 1)[1]
         total += targets.size(0)
         correct += predicted.eq(targets.data).cpu().sum()
         
@@ -141,8 +141,6 @@ def train(model, dataloaders, epochs=1, gpu_id=0, verbose=True, **kwargs):
     
     performance = []
     for epoch in range(epochs):
-        print('epoch=%d' % epoch, file=sys.stderr)
-        
         train_acc = train_epoch(model, opt, lr_scheduler, epoch, dataloaders['train'], gpu_id=gpu_id, verbose=verbose)
         test_acc = eval_epoch(model, dataloaders['test'], gpu_id=gpu_id, verbose=verbose)
         if dataloaders['val']:
@@ -150,11 +148,14 @@ def train(model, dataloaders, epochs=1, gpu_id=0, verbose=True, **kwargs):
         else:
             val_acc = None
         
-        performance.append({
+        perf = {
+            "epoch" : epoch,
             "train" : train_acc,
-            "test" : test_acc,
-            "val" : val_acc,
-        })
+            "test"  : test_acc,
+            "val"   : val_acc,
+        }
+        print(json.dumps(perf), file=sys.stderr)
+        performance.append(perf)
         
         if train_acc < 0.2:
             print('*' * 50 + 'VV break vv ' + '*' * 50, file=sys.stderr)

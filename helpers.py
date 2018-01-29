@@ -114,6 +114,6 @@ def reset_parameters(model):
         try:
             child.reset_parameters()
         except:
-            print("Cannot reset: %s" % str(child))
+            print("Cannot reset: %s" % str(child), file=sys.stderr)
     
     return model

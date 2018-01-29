@@ -285,7 +285,7 @@ def do_random_morph(model, n=1, assert_eye=True, block_model=False):
     model = model.cpu().eval()
     
     for i in range(n):
-        print('-- morph=%d --' % i)
+        print('-- morph=%d --' % i, file=sys.stderr)
         model = _do_random_morph(
             model=model,
             morph_factories=[

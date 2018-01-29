@@ -26,16 +26,6 @@ from trainer import train, make_dataloaders
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--run-name', type=str, default='morph-experiment')
-    
-    parser.add_argument('--epochs', type=int, default=20)
-    
-    parser.add_argument('--num-neighbors', type=int, default=8)
-    parser.add_argument('--num-morphs', type=int, default=5)
-    parser.add_argument('--num-steps', type=int, default=5)
-    parser.add_argument('--num-epoch-neighbors', type=int, default=17)
-    parser.add_argument('--num-epoch-final', type=int, default=100)
-    
-    parser.add_argument('--train-size', type=float, default=0.8)
     parser.add_argument('--seed', type=int, default=123)
     
     return parser.parse_args()
@@ -68,8 +58,11 @@ base_model = SeaNet({
 }, input_shape=(3, 32, 32))
 
 
+pretrain_epochs = 20
+additional_epochs = 20
+
 dataloaders = make_dataloaders(train_size=1.0)
-base_model, base_performance = train(base_model, dataloaders, epochs=20, verbose=True)
+base_model, base_performance = train(base_model, dataloaders, epochs=pretrain_epochs, verbose=True)
 
 for p in base_performance:
     p.update({"run_id" : -1, "scratch" : True})
@@ -81,13 +74,13 @@ for p in base_performance:
 run_id = 0
 while True:
     run_id += 1
-    print('run_id=%d' % run_id)
+    print('run_id=%d' % run_id, file=sys.stderr)
     
     new_model = do_random_morph(base_model, n=5)
     
     # --
     # Train w/ morph
-    model, performance = train(new_model, dataloaders, epochs=20, verbose=False)
+    model, performance = train(new_model, dataloaders, epochs=additional_epochs, verbose=False)
     for p in performance:
         p.update({"run_id" : run_id, "scratch" : False})
         print(json.dumps(p))
@@ -96,7 +89,7 @@ while True:
     # Train from scratch
     
     new_model = reset_parameters(new_model)
-    model, performance = train(new_model, dataloaders, epochs=20, verbose=False)
+    model, performance = train(new_model, dataloaders, epochs=pretrain_epochs + additional_epochs, verbose=False)
     for p in performance:
         p.update({"run_id" : run_id, "scratch" : True})
         print(json.dumps(p))
